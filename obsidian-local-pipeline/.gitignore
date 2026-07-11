@@ -1,0 +1,14 @@
+# Secrets & local config
+.env
+
+# Pipeline runtime output (leads, demos, drafts, logs, dedup state)
+output/
+
+# Local RAG index
+chroma_db/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/

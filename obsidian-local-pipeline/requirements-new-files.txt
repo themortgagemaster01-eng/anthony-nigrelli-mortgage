@@ -1,0 +1,23 @@
+# Dependencies required by the NEW files reconstructed here (Appendices A-H).
+# The base pipeline (pipeline.py, scraper.py, grader.py, rag_setup.py,
+# demo_gen_local.py, dashboard.py) lives in the original obsidian-local-pipeline
+# repo and has its own requirements.txt - install that too when you have it.
+
+# FastAPI backend (fastapi_backend.py) + Tesla dashboard PWA
+fastapi>=0.110,<1.0
+uvicorn>=0.29,<1.0
+pydantic>=2.0,<3.0
+
+# Media enhancer (media_enhancer.py) + Telegram/Unsplash/Ollama HTTP calls
+requests>=2.31,<3.0
+pillow>=10.0,<11.0
+python-dotenv>=1.0,<2.0
+
+# Nightly orchestrator (autonomous_orchestrator.py)
+schedule>=1.2,<2.0
+
+# Outreach generator (outreach_generator.py) RAG retrieval via local Ollama.
+# Optional - only needed if you want RAG-grounded drafts; the script degrades
+# gracefully to a baked-in fallback prompt if these are missing.
+langchain-ollama>=0.1,<1.0
+langchain-chroma>=0.1,<1.0

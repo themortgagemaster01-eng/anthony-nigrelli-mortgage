@@ -1,0 +1,8 @@
+# Add these lines to your existing requirements.txt (don't replace the whole file -
+# just append anything from this list you don't already have), then:
+#   pip install -r requirements.txt
+fastapi>=0.110,<1.0
+uvicorn>=0.29,<1.0
+pydantic>=2.0,<3.0
+requests>=2.31,<3.0
+pillow>=10.0,<11.0
