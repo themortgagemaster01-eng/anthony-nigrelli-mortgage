@@ -11,6 +11,9 @@ This folder contains the **new files** from the July 10, 2026 handoff guide — 
 orchestrator, the media enhancer, and the outreach generator — reconstructed from
 the handoff PDF.
 
+> **Docs:** see [`docs/`](docs/) for the business playbook (find → build → ship → sell)
+> and the design spec + blueprint for a dark "Tesla v2" dashboard redesign.
+
 ## What's here (from the handoff appendices)
 
 | File | Purpose |
