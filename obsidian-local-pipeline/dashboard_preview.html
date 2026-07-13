@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Obsidian Labs - Dashboard Preview</title>
+  <meta name="theme-color" content="#f8f9fa" />
+  <style>
+    :root {
+      --red: #cc0000;
+      --red-dark: #a30000;
+      --bg: #f8f9fa;
+      --card: #ffffff;
+      --border: #eee;
+      --text: #111;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    html, body { background: var(--bg); }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .preview-banner {
+      background: #111; color: #fff; font-size: 0.78rem; text-align: center;
+      padding: 0.5rem 1rem; letter-spacing: 0.01em;
+    }
+    .preview-banner strong { color: #ff6b6b; }
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+    .topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 1rem; border-bottom: 1px solid var(--border);
+      margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap;
+    }
+    .brand { font-weight: 700; font-size: 1.2rem; letter-spacing: -0.02em; }
+    .navtabs { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+    .navtabs button {
+      background: none; border: none; padding: 0.5rem 1rem; border-radius: 9999px;
+      font-weight: 600; cursor: pointer; color: var(--muted);
+    }
+    .navtabs button.active { background: #111; color: white; }
+    .navmeta { font-size: 0.8rem; color: var(--muted); text-align: right; }
+    .metrics {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 1rem; margin-bottom: 1.5rem;
+    }
+    .metric-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1.25rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .metric-card .label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
+    .metric-card .value { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .btn {
+      border-radius: 9999px; padding: 0.6rem 1.6rem; font-weight: 600; border: none;
+      background: var(--red); color: white; cursor: pointer; transition: all 0.15s;
+    }
+    .btn:hover { background: var(--red-dark); transform: translateY(-1px); }
+    .btn.secondary { background: #eee; color: #111; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .section {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1.5rem; margin-bottom: 1.5rem;
+    }
+    .section h2 { margin-top: 0; font-size: 1.1rem; }
+    .two-col { display: grid; grid-template-columns: 2fr 3fr; gap: 1.5rem; }
+    @media (max-width: 900px) {
+      .two-col { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .wrap { padding: 1.25rem 1rem 4rem; }
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--border); }
+    td.num { font-variant-numeric: tabular-nums; }
+    tr.lead-row { cursor: pointer; }
+    tr.lead-row:hover { background: #fafafa; }
+    .pill {
+      display: inline-block; padding: 3px 10px; border-radius: 9999px;
+      font-size: 0.75rem; font-weight: 600;
+    }
+    .pill-red { background: #ef4444; color: #fff; }
+    .pill-amber { background: #f59e0b; color: #111; }
+    .pill-green { background: #22c55e; color: #111; }
+    .pill-gray { background: #6b7280; color: #fff; }
+    .device-toggle { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .device-toggle button {
+      padding: 0.35rem 0.9rem; border-radius: 9999px; border: 1px solid var(--border);
+      background: white; cursor: pointer; font-size: 0.8rem;
+    }
+    .device-toggle button.active { background: #111; color: white; border-color: #111; }
+    .preview-frame-wrap { display: flex; justify-content: center; }
+    iframe#demo-preview {
+      border: 1px solid var(--border); border-radius: 16px;
+      width: 100%; height: 640px; background: white;
+    }
+    .draft-card {
+      border: 1px solid var(--border); border-radius: 12px;
+      padding: 1rem; margin-bottom: 0.75rem;
+    }
+    .draft-card pre { white-space: pre-wrap; font-family: inherit; font-size: 0.85rem; }
+    #chat-toggle {
+      position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px;
+      border-radius: 50%; background: var(--red); color: white; border: none;
+      font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.2); z-index: 50;
+    }
+    #chat-panel {
+      position: fixed; bottom: 90px; right: 24px; width: 340px; max-height: 480px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18); display: none;
+      flex-direction: column; z-index: 50; overflow: hidden;
+    }
+    #chat-panel.open { display: flex; }
+    #chat-header { background: #111; color: white; padding: 0.75rem 1rem; font-weight: 600; }
+    #chat-messages {
+      flex: 1; overflow-y: auto; padding: 0.75rem 1rem; font-size: 0.85rem;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .chat-msg { padding: 0.5rem 0.75rem; border-radius: 12px; max-width: 85%; }
+    .chat-msg.user { align-self: flex-end; background: var(--red); color: white; }
+    .chat-msg.bot { align-self: flex-start; background: #f1f1f1; color: #111; }
+    #chat-input-row { display: flex; border-top: 1px solid var(--border); }
+    #chat-input { flex: 1; border: none; padding: 0.75rem; font-size: 0.85rem; }
+    #chat-send { border: none; background: var(--red); color: white; padding: 0 1rem; cursor: pointer; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    button:focus-visible, .navtabs button:focus-visible, tr.lead-row:focus-visible {
+      outline: 2px solid var(--red); outline-offset: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="preview-banner">
+    <strong>Preview</strong> &middot; sample data, no live backend &mdash; this is exactly how the dashboard looks &amp; behaves once <code>fastapi_backend</code> is running on your laptop.
+  </div>
+  <div class="wrap">
+    <div class="topnav">
+      <div class="brand">&#9632; Obsidian Labs</div>
+      <div class="navtabs">
+        <button data-page="dashboard" class="active">Dashboard</button>
+        <button data-page="leads">Leads</button>
+        <button data-page="demos">Demos</button>
+        <button data-page="outreach">Outreach</button>
+      </div>
+      <div class="navmeta" id="nav-meta">Runs 100% locally. Nothing auto-sends.</div>
+      <button class="btn secondary" id="settings-btn" title="Set backend URL">&#9881;</button>
+    </div>
+
+    <div class="metrics">
+      <div class="metric-card"><div class="label">Leads</div><div class="value" id="m-leads">-</div></div>
+      <div class="metric-card"><div class="label">Hot leads</div><div class="value" id="m-hot">-</div></div>
+      <div class="metric-card"><div class="label">Demos generated</div><div class="value" id="m-demos">-</div></div>
+      <div class="metric-card"><div class="label">Outreach drafts</div><div class="value" id="m-outreach">-</div></div>
+    </div>
+
+    <div id="page-dashboard">
+      <div class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+          <button class="btn" id="run-pipeline-btn">Run Pipeline</button>
+          <button class="btn secondary" id="approve-btn" disabled>Approve &amp; Send</button>
+        </div>
+        <p class="muted" id="run-status">Tap a lead below to preview its generated demo site.</p>
+      </div>
+      <div class="two-col">
+        <div class="section">
+          <h2>Leads</h2>
+          <table>
+            <thead><tr><th>Business</th><th>Niche</th><th>Score</th><th>Status</th></tr></thead>
+            <tbody id="leads-tbody"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="section">
+          <h2>HTML Preview</h2>
+          <div class="device-toggle">
+            <button data-device="Desktop" class="active">Desktop</button>
+            <button data-device="Tablet">Tablet</button>
+            <button data-device="Mobile">Mobile</button>
+          </div>
+          <div class="preview-frame-wrap">
+            <iframe id="demo-preview" title="Demo site preview" srcdoc="<p style='font-family:sans-serif;color:#999;padding:2rem;'>Select a lead to preview its demo.</p>"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="page-leads" style="display:none;">
+      <div class="section">
+        <h2>All Leads</h2>
+        <table>
+          <thead><tr><th>Business</th><th>Niche</th><th>Town</th><th>Score</th><th>Hot?</th></tr></thead>
+          <tbody id="leads-full-tbody"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="page-demos" style="display:none;">
+      <div class="section">
+        <h2>Demos</h2>
+        <div id="demos-list" class="muted">Loading...</div>
+      </div>
+    </div>
+
+    <div id="page-outreach" style="display:none;">
+      <div class="section">
+        <h2>Outreach Drafts</h2>
+        <p class="muted">Drafts only - approving here just logs the approval. Sending is a separate, deliberate step outside this dashboard.</p>
+        <div id="outreach-list" class="muted">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <button id="chat-toggle" title="Ask the Obsidian Labs assistant">&#128172;</button>
+  <div id="chat-panel">
+    <div id="chat-header">Obsidian Labs Assistant</div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <input id="chat-input" type="text" placeholder="Ask about your pipeline..." />
+      <button id="chat-send">Send</button>
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------------
+    // PREVIEW BUILD: the real dashboard fetches everything from
+    // fastapi_backend on :8502. Here that network layer is replaced with
+    // baked-in sample data so the page is fully self-contained and works
+    // as a shareable link with no laptop/backend. Every interaction below
+    // behaves exactly as it does against the live backend.
+    // ---------------------------------------------------------------------
+    const DEMO_DENTAL = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+      *{margin:0;box-sizing:border-box;font-family:system-ui,sans-serif}
+      .hero{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;padding:64px 28px;text-align:center}
+      .hero h1{font-size:2rem;letter-spacing:-.02em}.hero p{opacity:.9;margin-top:10px}
+      .cta{display:inline-block;margin-top:22px;background:#fff;color:#155e75;padding:12px 26px;border-radius:9999px;font-weight:700;text-decoration:none}
+      .row{display:flex;flex-wrap:wrap;gap:16px;padding:36px 28px}
+      .card{flex:1 1 200px;border:1px solid #e5e7eb;border-radius:14px;padding:20px}
+      .card h3{color:#155e75}.card p{color:#6b7280;margin-top:8px;font-size:.9rem}
+      .bar{background:#f1f5f9;padding:16px 28px;text-align:center;color:#475569;font-size:.85rem}
+    </style></head><body>
+      <div class="hero"><h1>Mahopac Family Dental</h1><p>Gentle, modern dentistry for the whole family &mdash; now booking new patients.</p><a class="cta" href="#">Book an appointment</a></div>
+      <div class="row">
+        <div class="card"><h3>Same-day visits</h3><p>Emergency slots kept open every day for urgent care.</p></div>
+        <div class="card"><h3>Insurance friendly</h3><p>We handle the paperwork and most major plans.</p></div>
+        <div class="card"><h3>Kids welcome</h3><p>A calm, patient team that families in Mahopac trust.</p></div>
+      </div>
+      <div class="bar">123 Lake Blvd, Mahopac NY &middot; (845) 555-0142 &middot; Mon&ndash;Fri 8&ndash;5</div>
+    </body></html>`;
+
+    const DEMO_SALON = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+      *{margin:0;box-sizing:border-box;font-family:Georgia,serif}
+      .hero{background:#1c1917;color:#fbbf24;padding:64px 28px;text-align:center}
+      .hero h1{font-size:2.1rem;letter-spacing:.04em}.hero p{color:#e7e5e4;margin-top:10px;font-family:system-ui}
+      .cta{display:inline-block;margin-top:22px;background:#fbbf24;color:#1c1917;padding:12px 26px;border-radius:6px;font-weight:700;text-decoration:none;font-family:system-ui}
+      .svc{padding:36px 28px;max-width:520px;margin:0 auto}
+      .svc div{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #eee;font-family:system-ui}
+    </style></head><body>
+      <div class="hero"><h1>SHEAR ELEGANCE</h1><p>Carmel&rsquo;s studio for cut, color &amp; style.</p><a class="cta" href="#">Reserve your chair</a></div>
+      <div class="svc"><div><span>Women&rsquo;s cut &amp; style</span><span>$65+</span></div><div><span>Full color</span><span>$120+</span></div><div><span>Balayage</span><span>$180+</span></div><div><span>Men&rsquo;s cut</span><span>$35</span></div></div>
+    </body></html>`;
+
+    const SAMPLE = {
+      leads: [
+        { name: "Mahopac Family Dental", type: "dentist",    town: "Mahopac", perf_score: 34, status: "graded",      is_hot_lead: "true"  },
+        { name: "Summit Roofing Co",     type: "roofer",     town: "Carmel",  perf_score: 0,  status: "no_website",  is_hot_lead: "true"  },
+        { name: "Lakeside Bistro",       type: "restaurant", town: "Mahopac", perf_score: 78, status: "graded",      is_hot_lead: "false" },
+        { name: "Shear Elegance Salon",  type: "salon",      town: "Carmel",  perf_score: 45, status: "graded",      is_hot_lead: "true"  },
+        { name: "Carmel Auto Care",      type: "auto shop",  town: "Carmel",  perf_score: 0,  status: "unreachable", is_hot_lead: "false" }
+      ],
+      demoHtml: {
+        "mahopac-family-dental": DEMO_DENTAL,
+        "shear-elegance-salon": DEMO_SALON
+      },
+      outreach: {
+        "mahopac-family-dental":
+`Subject: Quick question about your Mahopac dentist website
+
+Hi Dr. Alvarez,
+
+I was looking at dental practices around Mahopac and noticed your site loads slowly on phones and doesn't have an easy "book online" button up top - which is where most new-patient enquiries start these days.
+
+I put together a quick redesigned home page for Mahopac Family Dental so you can see what a faster, mobile-first version could look like (no obligation, it's already built).
+
+If it's useful, our Starter site is a flat $1,495. Happy to send the preview link over - want me to?
+
+Best,
+Obsidian Labs`
+      }
+    };
+
+    function computeStatus() {
+      const hot = SAMPLE.leads.filter(l => String(l.is_hot_lead).toLowerCase() === "true").length;
+      return {
+        leads: SAMPLE.leads.length,
+        hot_leads: hot,
+        demos: Object.keys(SAMPLE.demoHtml).length,
+        outreach_drafts: Object.keys(SAMPLE.outreach).length,
+        pricing: { starter: 1495, professional: 2500, business_growth: "4500+" },
+        guardrails: "Runs 100% locally. Nothing auto-sends."
+      };
+    }
+
+    function cannedChat(msg) {
+      const m = (msg || "").toLowerCase();
+      if (m.includes("hot")) return "You have 3 hot leads right now: Mahopac Family Dental, Summit Roofing Co, and Shear Elegance Salon. Summit has no website at all - usually the easiest first conversation.";
+      if (m.includes("price") || m.includes("cost") || m.includes("$")) return "Pricing is Starter $1,495 / Professional $2,500 (most popular) / Business Growth $4,500+. The drafts pitch the Starter tier by default.";
+      if (m.includes("send")) return "This system never auto-sends. Approving a draft here just logs it - you send manually from your own inbox when you're ready.";
+      return "This is a preview reply. Against the live backend I answer using your real pipeline stats via local Ollama - nothing leaves your laptop. Try asking about your hot leads or pricing.";
+    }
+
+    async function apiGet(path) {
+      await new Promise(r => setTimeout(r, 110));
+      if (path === "/api/status") return computeStatus();
+      if (path === "/api/leads") return SAMPLE.leads;
+      if (path === "/api/demos") return Object.keys(SAMPLE.demoHtml).map(s => ({ slug: s }));
+      if (path.startsWith("/api/demos/")) {
+        const slug = decodeURIComponent(path.split("/").pop());
+        if (SAMPLE.demoHtml[slug]) return { slug, html: SAMPLE.demoHtml[slug] };
+        throw new Error(`${path} -> 404`);
+      }
+      if (path === "/api/outreach") return Object.keys(SAMPLE.outreach).map(s => ({ slug: s }));
+      if (path.startsWith("/api/outreach/")) {
+        const slug = decodeURIComponent(path.split("/").pop());
+        return { slug, content: SAMPLE.outreach[slug] || "" };
+      }
+      throw new Error(`${path} -> 404`);
+    }
+
+    async function apiPost(path, body) {
+      await new Promise(r => setTimeout(r, 150));
+      if (path === "/api/chat") return { reply: cannedChat((body || {}).message) };
+      if (path === "/api/approve") return { status: "logged", ...(body || {}) };
+      if (path === "/api/run-pipeline") return { status: "started", command: "pipeline.py --stage all" };
+      return {};
+    }
+
+    let currentDevice = "Desktop";
+    let currentSlug = null;
+    let leadsCache = [];
+
+    function pillFor(status, perf) {
+      perf = Number(perf) || 0;
+      if (status === "no_website") return ["No Website", "pill-red"];
+      if (status === "unreachable") return ["Unreachable", "pill-red"];
+      if (status === "api_error") return ["Grade Error", "pill-gray"];
+      if (perf <= 50) return ["Needs Improvement", "pill-amber"];
+      return ["Healthy", "pill-green"];
+    }
+
+    function slugify(name) {
+      return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "lead";
+    }
+
+    async function loadStatus() {
+      try {
+        const s = await apiGet("/api/status");
+        document.getElementById("m-leads").textContent = s.leads;
+        document.getElementById("m-hot").textContent = s.hot_leads;
+        document.getElementById("m-demos").textContent = s.demos;
+        document.getElementById("m-outreach").textContent = s.outreach_drafts;
+        document.getElementById("nav-meta").textContent =
+          `${s.leads} leads - ${s.hot_leads} hot - ${s.demos} demos - ${s.outreach_drafts} drafts`;
+      } catch (e) {
+        document.getElementById("nav-meta").textContent =
+          "Backend unreachable - is fastapi_backend running on :8502?";
+      }
+    }
+
+    async function loadLeads() {
+      try { leadsCache = await apiGet("/api/leads"); }
+      catch (e) { leadsCache = []; }
+      renderLeadsTable();
+      renderLeadsFullTable();
+    }
+
+    function renderLeadsTable() {
+      const tbody = document.getElementById("leads-tbody");
+      if (!leadsCache.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="muted">No leads yet. Run the pipeline above.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = leadsCache.map(l => {
+        const [label, cls] = pillFor(l.status, l.perf_score);
+        return `<tr class="lead-row" data-slug="${slugify(l.name)}" tabindex="0">
+          <td>${l.name || ""}</td><td>${l.type || ""}</td><td class="num">${l.perf_score || 0}</td>
+          <td><span class="pill ${cls}">${label}</span></td></tr>`;
+      }).join("");
+      document.querySelectorAll("#leads-tbody tr.lead-row").forEach(row => {
+        const go = () => selectLead(row.dataset.slug);
+        row.addEventListener("click", go);
+        row.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+      });
+    }
+
+    function renderLeadsFullTable() {
+      const tbody = document.getElementById("leads-full-tbody");
+      if (!leadsCache.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="muted">No leads yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = leadsCache.map(l => `<tr>
+        <td>${l.name || ""}</td><td>${l.type || ""}</td><td>${l.town || ""}</td>
+        <td class="num">${l.perf_score || 0}</td><td>${String(l.is_hot_lead).toLowerCase() === "true" ? "Yes" : "No"}</td></tr>`).join("");
+    }
+
+    async function selectLead(slug) {
+      currentSlug = slug;
+      document.getElementById("approve-btn").disabled = false;
+      try {
+        const demo = await apiGet(`/api/demos/${slug}`);
+        renderPreview(demo.html);
+        document.getElementById("run-status").textContent = `Previewing the generated demo for '${slug}'.`;
+      } catch (e) {
+        document.getElementById("demo-preview").srcdoc =
+          `<p style='font-family:sans-serif;color:#999;padding:2rem;'>No demo generated yet for '${slug}'.</p>`;
+        document.getElementById("run-status").textContent = `No demo generated yet for '${slug}'. (In the live app, the pipeline builds one.)`;
+      }
+    }
+
+    function renderPreview(html) {
+      const widths = { Desktop: "100%", Tablet: "768px", Mobile: "390px" };
+      const iframe = document.getElementById("demo-preview");
+      iframe.style.width = widths[currentDevice];
+      iframe.style.margin = currentDevice === "Desktop" ? "0" : "0 auto";
+      iframe.srcdoc = html;
+    }
+
+    document.querySelectorAll(".device-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".device-toggle button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentDevice = btn.dataset.device;
+        if (currentSlug) selectLead(currentSlug);
+      });
+    });
+
+    document.getElementById("approve-btn").addEventListener("click", async () => {
+      if (!currentSlug) return;
+      await apiPost("/api/approve", { kind: "dashboard_approve_and_send", identifier: currentSlug });
+      document.getElementById("run-status").textContent =
+        `Logged approval for '${currentSlug}'. This does NOT send anything.`;
+    });
+
+    document.getElementById("run-pipeline-btn").addEventListener("click", async () => {
+      document.getElementById("run-status").textContent = "Starting pipeline in background...";
+      try {
+        await apiPost("/api/run-pipeline", { stage: "all", towns: ["Mahopac", "Carmel"], niches: ["dentist", "roofer"], limit: 5 });
+        document.getElementById("run-status").textContent =
+          "Started. (Preview: in the live app this kicks off scrape -> grade -> demo -> outreach and logs to output/logs/pipeline_run.log.)";
+      } catch (e) {
+        document.getElementById("run-status").textContent = "Failed to start - is the backend running?";
+      }
+    });
+
+    async function loadDemos() {
+      try {
+        const demos = await apiGet("/api/demos");
+        const el = document.getElementById("demos-list");
+        if (!demos.length) { el.innerHTML = `<p class="muted">No demos generated yet.</p>`; return; }
+        el.innerHTML = demos.map(d => `<div class="draft-card"><strong>${d.slug}</strong></div>`).join("");
+      } catch (e) {}
+    }
+
+    async function loadOutreach() {
+      try {
+        const drafts = await apiGet("/api/outreach");
+        const el = document.getElementById("outreach-list");
+        if (!drafts.length) { el.innerHTML = `<p class="muted">No outreach drafts yet.</p>`; return; }
+        let html = "";
+        for (const d of drafts) {
+          const full = await apiGet(`/api/outreach/${d.slug}`);
+          html += `<div class="draft-card"><strong>${d.slug}</strong>
+            <pre>${full.content.replace(/</g, "&lt;")}</pre>
+            <button class="btn secondary" data-approve-slug="${d.slug}">Approve</button></div>`;
+        }
+        el.innerHTML = html;
+        el.querySelectorAll("[data-approve-slug]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            await apiPost("/api/approve", { kind: "outreach_approved", identifier: btn.dataset.approveSlug });
+            btn.textContent = "Approved";
+            btn.disabled = true;
+          });
+        });
+      } catch (e) {}
+    }
+
+    document.querySelectorAll(".navtabs button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".navtabs button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        ["dashboard", "leads", "demos", "outreach"].forEach(p => {
+          document.getElementById(`page-${p}`).style.display = p === btn.dataset.page ? "" : "none";
+        });
+        if (btn.dataset.page === "demos") loadDemos();
+        if (btn.dataset.page === "outreach") loadOutreach();
+      });
+    });
+
+    const chatToggle = document.getElementById("chat-toggle");
+    const chatPanel = document.getElementById("chat-panel");
+    const chatMessages = document.getElementById("chat-messages");
+    const chatInput = document.getElementById("chat-input");
+
+    chatToggle.addEventListener("click", () => chatPanel.classList.toggle("open"));
+
+    function addChatMsg(text, who) {
+      const div = document.createElement("div");
+      div.className = `chat-msg ${who}`;
+      div.textContent = text;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function sendChat() {
+      const msg = chatInput.value.trim();
+      if (!msg) return;
+      addChatMsg(msg, "user");
+      chatInput.value = "";
+      addChatMsg("Thinking...", "bot");
+      try {
+        const res = await apiPost("/api/chat", { message: msg });
+        chatMessages.lastChild.textContent = res.reply || "(no response)";
+      } catch (e) {
+        chatMessages.lastChild.textContent = "Couldn't reach the assistant - is fastapi_backend + Ollama running?";
+      }
+    }
+
+    document.getElementById("chat-send").addEventListener("click", sendChat);
+    chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
+
+    document.getElementById("settings-btn").addEventListener("click", () => {
+      alert("In the live dashboard this is where you paste your backend URL (e.g. your ngrok https address, or http://localhost:8502). In this preview the data is built-in, so there's nothing to point at.");
+    });
+
+    // Seed the assistant with a friendly opener and load everything.
+    addChatMsg("Hi! I'm your pipeline assistant. Ask me about your hot leads, drafts, or pricing.", "bot");
+    loadStatus();
+    loadLeads();
+  </script>
+</body>
+</html>
