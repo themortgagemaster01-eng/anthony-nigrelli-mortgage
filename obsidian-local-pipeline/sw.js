@@ -2,8 +2,9 @@
 // Caches the static shell (HTML/CSS/JS/icons) so the dashboard opens instantly and
 // works if briefly offline. Does NOT cache API responses from fastapi_backend - live
 // data always comes from the network.
-const CACHE_NAME = "obsidian-labs-shell-v1";
+const CACHE_NAME = "obsidian-labs-shell-v2";
 const SHELL_FILES = [
+  "tesla_style_dashboard_v2.html",
   "tesla_style_dashboard_with_chat.html",
   "manifest.json",
   "icon-192.png",

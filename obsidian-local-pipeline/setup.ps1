@@ -93,7 +93,8 @@ Start-Sleep -Seconds 2
 Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$RepoPath'; Write-Host 'Backend - keep me open'; uvicorn fastapi_backend:app --port $BackendPort"
 Start-Sleep -Seconds 3
 
-$dashboard = Join-Path $RepoPath "tesla_style_dashboard_with_chat.html"
+$dashboard = Join-Path $RepoPath "tesla_style_dashboard_v2.html"
+if (-not (Test-Path $dashboard)) { $dashboard = Join-Path $RepoPath "tesla_style_dashboard_with_chat.html" }
 if (Test-Path $dashboard) { Start-Process $dashboard }
 
 Say "`n=== Done! ===" "Cyan"
