@@ -1,0 +1,24 @@
+# Obsidian Labs — full system dependencies (engine + backend + dashboards).
+# Install:  pip install -r requirements.txt
+
+# --- FastAPI backend + PWA dashboards ---
+fastapi>=0.110,<1.0
+uvicorn>=0.29,<1.0
+pydantic>=2.0,<3.0
+
+# --- Shared ---
+requests>=2.31,<3.0
+python-dotenv>=1.0,<2.0
+pillow>=10.0,<11.0
+schedule>=1.2,<2.0
+
+# --- Streamlit review dashboard (engine) ---
+streamlit>=1.36,<2.0
+pandas>=2.0,<3.0
+
+# --- Local LLM + RAG (Ollama + Chroma) ---
+langchain-ollama>=0.1,<1.0
+langchain-community>=0.2,<1.0
+langchain-text-splitters>=0.2,<1.0
+langchain-chroma>=0.1,<1.0
+chromadb>=0.5,<1.0

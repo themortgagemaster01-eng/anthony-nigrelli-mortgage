@@ -6,15 +6,34 @@ generation, and outreach drafting. Nothing here calls a paid AI API — it runs 
 system auto-sends anything** — a human reviews and approves drafts in a dashboard,
 then sends manually.
 
-This folder contains the **new files** from the July 10, 2026 handoff guide — the
-"Tesla-style" phone-friendly PWA dashboard, its FastAPI backend, the v2 nightly
-orchestrator, the media enhancer, and the outreach generator — reconstructed from
-the handoff PDF.
+This is the **complete system**: the core engine (scrape → grade → RAG → demo → outreach)
+plus the FastAPI backend, three dashboard skins, the nightly orchestrator, and media
+enhancer. Flow: scrape local businesses → grade their current site → build a personalized
+demo with a local LLM → draft a compliant outreach email → review/approve in a dashboard →
+**you send manually**.
 
 > **Docs:** see [`docs/`](docs/) for the business playbook (find → build → ship → sell)
 > and the design spec + blueprint for a dark "Tesla v2" dashboard redesign.
 
-## What's here (from the handoff appendices)
+## The engine (scrape → grade → RAG → demo → outreach)
+
+| File | Purpose |
+| --- | --- |
+| `pipeline.py` | CLI orchestrator — runs any stage or `--stage all` |
+| `scraper.py` | Finds local businesses via Google Places → `output/leads.csv` |
+| `grader.py` | Scores each site via PageSpeed Insights → `output/leads_graded.csv` |
+| `rag_setup.py` | Builds the local `chroma_db` index from your Drive/Obsidian docs |
+| `demo_gen_local.py` | Generates a demo site per hot lead via local Ollama + RAG |
+| `outreach_local.py` | Drafts a 3-touch, CAN-SPAM outreach sequence per hot lead |
+| `dashboard.py` | Original Streamlit review dashboard (`--stage dashboard`, port 8501) |
+| `templates/` | System prompts for demo + outreach generation, and a reference demo |
+
+> `scraper.py` and `grader.py` are faithful re-implementations of the documented
+> interface — swap in your real versions from Drive if they have custom logic.
+> The `templates/*.md` prompts are **starter** content; replace them with your real
+> design-standards / voice docs for on-brand output.
+
+## The dashboard + automation layer
 
 | File | Purpose |
 | --- | --- |
@@ -32,32 +51,22 @@ the handoff PDF.
 > backend changes. `dashboard_leadflow.html` is the current default; swap the one you
 > prefer into `manifest.json` `start_url` to change which installs as the app.
 | `icon-192.png` / `icon-512.png` | App icons (placeholder brand mark — swap for the real assets) |
-| `NEW_REQUIREMENTS_ADD_2026-07-10.txt` | New pip packages to append to the base `requirements.txt` |
-| `requirements-new-files.txt` | Full dependency list for just the files in this folder |
+| `requirements.txt` | Full dependency list for the whole system (engine + backend + dashboards) |
 | `.env.example` | Template for the `.env` file (copy to `.env` and fill in) |
+| `.streamlit/config.toml` | Dark theme for the Streamlit review dashboard |
 
-## What's NOT here (needs the original repo)
+## Two outreach drafters (both write `output/outreach/<slug>.md`)
 
-The base pipeline is described in the handoff as *"already in the GitHub repo"*
-(`obsidian-local-pipeline`) and its source is **not** in the PDF, so it could not be
-reconstructed. The new files above call these — copy them in from the original repo:
+- `outreach_local.py` — the engine's **3-touch** CAN-SPAM sequence; run by `pipeline.py`.
+- `outreach_generator.py` — a single **$1,495 pitch** email; run by `autonomous_orchestrator.py`.
 
-- `pipeline.py` — orchestrator (scrape → grade stages)
-- `scraper.py` — finds local businesses (Google Places)
-- `grader.py` — scores each business's current website (PageSpeed)
-- `rag_setup.py` — builds the local `chroma_db` index from Drive/Obsidian docs
-- `demo_gen_local.py` — generates a personalized demo site via local LLM + RAG
-- `dashboard.py` — the original Streamlit dashboard
-- `templates/` — design-standards and outreach-voice prompts
-
-The reconstructed files degrade gracefully when these are absent (the orchestrator
-logs and skips missing stages; the backend serves empty lists until the pipeline runs).
+Use whichever fits; they're interchangeable entry points over the same data.
 
 ## Quick start
 
 ```bash
-# 1. install deps for the new files
-pip install -r requirements-new-files.txt
+# 1. install everything
+pip install -r requirements.txt
 
 # 2. configure environment
 cp .env.example .env      # then edit paths/keys
@@ -69,6 +78,28 @@ uvicorn fastapi_backend:app --port 8502 --reload
 #    - locally: open dashboard_leadflow.html  (alt skins: tesla_style_dashboard_v2.html, tesla_style_dashboard_with_chat.html)
 #    - on a phone: serve via GitHub Pages + point the settings/backend URL at an ngrok tunnel
 ```
+
+### Run the pipeline (the engine)
+
+Needs a running `ollama serve` (with the two models pulled) and `GOOGLE_API_KEY` in `.env`.
+
+```bash
+# full run: scrape -> grade -> rag_ingest -> demo -> outreach
+python pipeline.py --towns Mahopac Carmel --niches dentist roofer --limit 5
+
+# or a single stage
+python pipeline.py --stage scrape --towns Mahopac --niches dentist --limit 5
+python pipeline.py --stage grade
+python pipeline.py --stage rag_ingest     # rebuild the RAG index after adding docs
+python pipeline.py --stage demo
+python pipeline.py --stage outreach
+
+# the original Streamlit review dashboard (port 8501)
+python pipeline.py --stage dashboard
+```
+
+Or just click **Run Pipeline** in any of the web dashboards (it calls the backend,
+which launches `pipeline.py` in the background and logs to `output/logs/pipeline_run.log`).
 
 ### Nightly automation (optional)
 

@@ -81,8 +81,19 @@ Say "[4/6] Installing Python packages..." "Yellow"
 $venv = Join-Path $Engine "venv\Scripts\Activate.ps1"
 if (Test-Path $venv) { . $venv; Say "  venv activated." "DarkGray" }
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet fastapi uvicorn pydantic requests pillow python-dotenv schedule
+$reqs = Join-Path $Engine "requirements.txt"
+if (Test-Path $reqs) { python -m pip install --quiet -r $reqs }
+else { python -m pip install --quiet fastapi uvicorn pydantic requests pillow python-dotenv schedule }
 Say "  Packages installed." "Green"
+
+# --- 4b. .env sanity ---
+$envFile = Join-Path $Engine ".env"
+if (-not (Test-Path $envFile)) {
+    Copy-Item (Join-Path $Engine ".env.example") $envFile -ErrorAction SilentlyContinue
+    Say "  Created .env from .env.example - add your GOOGLE_API_KEY before running the pipeline." "DarkYellow"
+} elseif (-not (Select-String -Path $envFile -Pattern '^GOOGLE_API_KEY=.+' -Quiet)) {
+    Say "  NOTE: GOOGLE_API_KEY is not set in .env - scrape/grade stages need it (Places + PageSpeed)." "DarkYellow"
+}
 
 # --- 5. ollama models ---
 Say "[5/6] Checking Ollama models (first run may download several GB)..." "Yellow"
