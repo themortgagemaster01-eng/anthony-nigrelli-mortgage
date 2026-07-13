@@ -22,10 +22,15 @@ the handoff PDF.
 | `media_enhancer.py` | Sharpens/enhances real scraped photos (Pillow); optional Unsplash stock-photo fallback |
 | `outreach_generator.py` | Drafts the $1,495 pitch email via local Ollama, grounded in RAG |
 | `fastapi_backend.py` | API server (port 8502) powering the dashboard |
-| `tesla_style_dashboard_v2.html` | **Current dashboard** — dark, Tesla/Apple glassmorphism: AI status ring, KPI + Potential Revenue cards, ⌘K command palette, live activity feed, chat, PWA |
-| `tesla_style_dashboard_with_chat.html` | v1 dashboard (light theme) — kept as a fallback; same backend |
-| `dashboard_v2_preview.html` / `dashboard_preview.html` | Self-contained sample-data previews (shareable, no backend) |
-| `manifest.json` / `sw.js` | PWA manifest + service worker (installs the v2 dashboard as an app) |
+| `dashboard_leadflow.html` | **Current dashboard** — light, LeadFlow-style: sidebar nav, KPI cards with sparklines, lead-growth area chart, leads-by-niche donut, recent-leads table, demo-preview modal, chat, PWA |
+| `tesla_style_dashboard_v2.html` | Alt dashboard — dark Tesla/Apple glassmorphism (status ring, ⌘K palette); same backend |
+| `tesla_style_dashboard_with_chat.html` | Original v1 dashboard (light, tables); same backend |
+| `dashboard_leadflow_preview.html` / `dashboard_v2_preview.html` / `dashboard_preview.html` | Self-contained sample-data previews (shareable, no backend) |
+| `manifest.json` / `sw.js` | PWA manifest + service worker (installs the current dashboard as an app) |
+
+> Three dashboard skins ship here — all talk to the **same** `fastapi_backend` with no
+> backend changes. `dashboard_leadflow.html` is the current default; swap the one you
+> prefer into `manifest.json` `start_url` to change which installs as the app.
 | `icon-192.png` / `icon-512.png` | App icons (placeholder brand mark — swap for the real assets) |
 | `NEW_REQUIREMENTS_ADD_2026-07-10.txt` | New pip packages to append to the base `requirements.txt` |
 | `requirements-new-files.txt` | Full dependency list for just the files in this folder |
@@ -61,8 +66,8 @@ cp .env.example .env      # then edit paths/keys
 uvicorn fastapi_backend:app --port 8502 --reload
 
 # 4. open the dashboard
-#    - locally: open tesla_style_dashboard_v2.html  (v1 light theme still at tesla_style_dashboard_with_chat.html)
-#    - on a phone: serve via GitHub Pages + point the gear (⚙ Backend) URL at an ngrok tunnel
+#    - locally: open dashboard_leadflow.html  (alt skins: tesla_style_dashboard_v2.html, tesla_style_dashboard_with_chat.html)
+#    - on a phone: serve via GitHub Pages + point the settings/backend URL at an ngrok tunnel
 ```
 
 ### Nightly automation (optional)
