@@ -30,6 +30,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
+REM --- desktop shortcut (first run only) ---------------------------
+if not exist ".shortcut_done" call :make_shortcut
+
 REM --- 2. environment + packages (first run only) ------------------
 if not exist "venv\Scripts\activate.bat" (
   echo [1/4] Creating the Python environment. First run only, one moment...
@@ -76,7 +79,25 @@ echo =====================================
 echo   All set.
 echo   - Two windows opened: Ollama + Backend. Keep them open while you work.
 echo   - The dashboard opened in your browser. Click "Run Pipeline" to begin.
+echo   - Want it on your phone? Double-click PHONE_ACCESS.bat.
 echo   - You can close THIS window now.
 echo =====================================
 echo.
 pause
+exit /b 0
+
+REM ================= subroutines =================
+:make_shortcut
+set "VBS=%TEMP%\ol_shortcut.vbs"
+> "%VBS%" echo Set oWS = CreateObject("WScript.Shell")
+>> "%VBS%" echo sLink = oWS.SpecialFolders("Desktop") ^& "\Obsidian Labs.lnk"
+>> "%VBS%" echo Set oLink = oWS.CreateShortcut(sLink)
+>> "%VBS%" echo oLink.TargetPath = "%~f0"
+>> "%VBS%" echo oLink.WorkingDirectory = "%~dp0"
+>> "%VBS%" echo oLink.IconLocation = "%SystemRoot%\System32\SHELL32.dll, 43"
+>> "%VBS%" echo oLink.Save
+cscript //nologo "%VBS%" >nul 2>&1
+del "%VBS%" >nul 2>&1
+echo done> ".shortcut_done"
+echo Created a "Obsidian Labs" shortcut on your Desktop.
+goto :eof

@@ -31,7 +31,7 @@ running the whole system is a **double-click**.
 
 **Every day after**, just double-click `START.bat` again — it skips setup and opens straight to the dashboard in a few seconds.
 
-> Tip: right-click `START.bat` → **Send to → Desktop (create shortcut)** so you have an icon to double-click. You can rename the shortcut "Obsidian Labs".
+> On the first run it also drops an **"Obsidian Labs" shortcut on your Desktop** automatically — after that, just double-click the desktop icon.
 
 ## Notes
 - Keep the two little windows (Ollama + Backend) open while you use the dashboard. Closing them stops the app. Double-click `START.bat` to bring it all back.
@@ -40,8 +40,13 @@ running the whole system is a **double-click**.
 - To change your API key later, delete the `.env` file and double-click `START.bat` again; it'll ask for the key again.
 
 ## Want it on your phone too?
-The dashboard works on your phone once the backend is reachable over the internet:
-1. Install **ngrok** (ngrok.com), run `ngrok http 8502`.
-2. Copy the `https://…ngrok…` link it shows.
-3. Open the dashboard on your phone, tap the settings/backend option, paste that link.
-(That part still uses a terminal for ngrok — ask and I can wrap it into the launcher too.)
+Also a double-click: **`PHONE_ACCESS.bat`** (with `START.bat` already running).
+
+- **First time only:** install **ngrok** (free, ngrok.com), make a free account, and run its
+  one-time `ngrok config add-authtoken …` line (ngrok shows you the exact command).
+- Then double-click **`PHONE_ACCESS.bat`**. It opens the tunnel, **copies your phone URL to
+  the clipboard**, and saves it to `phone_url.txt`.
+- On your phone: open the dashboard → settings/backend → paste the URL → save.
+
+The ngrok URL changes each time you restart it, so if you restart ngrok, re-run
+`PHONE_ACCESS.bat` and re-paste the new URL.
