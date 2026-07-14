@@ -82,14 +82,18 @@ If the user's Google Drive / Obsidian vault paths differ from the defaults, upda
 `GDRIVE_PATH` and `OBSIDIAN_VAULT_PATH` (RAG works better with them, but degrades gracefully).
 
 ### Step 5b — Import the user's past demos into the dashboard
-The user has previously-built demo sites (named `demo_*.html`) in their Google Drive /
-Obsidian vault, and possibly in `seed_demos/`. Pull them into the dashboard:
+The user has previously-built demos in three places. Pull them all in:
 ```powershell
-python import_demos.py
+python import_demos.py            # from Google Drive + Obsidian/Shipper vault + seed_demos/
+python import_github_demos.py     # from the user's public GitHub demo repos
 ```
-This copies each demo to `output\demos\<slug>\index.html` so it shows in the Demos tab.
-If `GDRIVE_PATH` / `OBSIDIAN_VAULT_PATH` in `.env` don't point at the folders holding those
-demos, fix them first (or drop the demo files into `seed_demos\` and re-run).
+`import_demos.py` copies each demo to `output\demos\<slug>\index.html` (fix `GDRIVE_PATH` /
+`OBSIDIAN_VAULT_PATH` in `.env` first if they don't point at the folders holding the demos,
+or drop files into `seed_demos\`). `import_github_demos.py` clones the repos listed at the top
+of that file (mahopac-demos, castro-tax-demo, xtrachange-demo, mrnicks-demo, obsidianlabs-demo)
+and imports their `index.html` demos, including per-business subfolders in a collection repo
+like `mahopac-demos`. After both, run `python -c "import os;print(os.listdir('output/demos'))"`
+and report which demos were imported.
 Also worth doing if the user wants on-brand output: if they have a real design-standards /
 demo prompt in Drive (e.g. `demo_system_prompt_UPDATED_*.md`, `SKILL_obsidian-web-design-standards`),
 copy its content over `templates\demo_system_prompt.md` (and their voice doc over
