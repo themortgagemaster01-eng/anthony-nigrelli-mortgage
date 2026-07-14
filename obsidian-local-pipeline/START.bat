@@ -66,6 +66,10 @@ if not exist ".env" (
   echo [3/4] Config already exists. Skipping.
 )
 
+REM --- 3b. import any past demos into the dashboard ---------------
+echo Importing your past demo websites, if any...
+python import_demos.py
+
 REM --- 4. launch ---------------------------------------------------
 echo [4/4] Starting Ollama and the backend, then opening the dashboard...
 start "Ollama" cmd /k ollama serve

@@ -81,6 +81,20 @@ Leave the other `.env` values at their defaults unless the user asks to change p
 If the user's Google Drive / Obsidian vault paths differ from the defaults, update
 `GDRIVE_PATH` and `OBSIDIAN_VAULT_PATH` (RAG works better with them, but degrades gracefully).
 
+### Step 5b — Import the user's past demos into the dashboard
+The user has previously-built demo sites (named `demo_*.html`) in their Google Drive /
+Obsidian vault, and possibly in `seed_demos/`. Pull them into the dashboard:
+```powershell
+python import_demos.py
+```
+This copies each demo to `output\demos\<slug>\index.html` so it shows in the Demos tab.
+If `GDRIVE_PATH` / `OBSIDIAN_VAULT_PATH` in `.env` don't point at the folders holding those
+demos, fix them first (or drop the demo files into `seed_demos\` and re-run).
+Also worth doing if the user wants on-brand output: if they have a real design-standards /
+demo prompt in Drive (e.g. `demo_system_prompt_UPDATED_*.md`, `SKILL_obsidian-web-design-standards`),
+copy its content over `templates\demo_system_prompt.md` (and their voice doc over
+`templates\email_system_prompt.md`).
+
 ### Step 6 — Launch
 Start each long-running piece in its own window and leave them running:
 ```powershell
