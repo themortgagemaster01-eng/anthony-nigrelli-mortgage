@@ -1,63 +1,1013 @@
-# Obsidian Labs — Complete Project Bundle
+# Obsidian Labs - Complete Project Bundle (for review)
 
-_Every source file in the pipeline, in one markdown document, for review.
-Local lead-gen: scrape businesses → grade their sites → build a local-LLM demo →
-draft outreach → human approves in a dashboard → human sends. $0 API cost, nothing auto-sends._
-
-**Omitted:** binary assets (app icons), the local RAG index, and generated `output/`.
-Everything else in the project is below.
+Local, $0-cost AI lead-gen pipeline for a web-design studio: scrape local businesses -> grade
+their site -> generate a demo with a local LLM (Ollama) -> draft outreach -> human approves in a
+dashboard -> human sends. Nothing auto-sends. This file contains the full codebase, the data
+model, and a catalog of the demo websites already built.
 
 ---
 
 ## Contents
 
-- **Engine**
-  - `pipeline.py`
-  - `scraper.py`
-  - `grader.py`
-  - `rag_setup.py`
-  - `demo_gen_local.py`
-  - `outreach_local.py`
-  - `dashboard.py`
-- **Backend (API)**
-  - `fastapi_backend.py`
-- **Dashboards (live, browser/PWA)**
-  - `dashboard_leadflow.html`
-  - `tesla_style_dashboard_v2.html`
-  - `tesla_style_dashboard_with_chat.html`
-- **Automation & media**
-  - `autonomous_orchestrator.py`
-  - `media_enhancer.py`
-  - `outreach_generator.py`
-- **PWA shell**
-  - `manifest.json`
-  - `sw.js`
-- **Prompt templates**
-  - `templates/demo_system_prompt.md`
-  - `templates/email_system_prompt.md`
-  - `templates/reference_demos/wallys-super-service.html`
-  - `templates/reference_demos/README.md`
-- **Config & deps**
-  - `requirements.txt`
-  - `.env.example`
-  - `.streamlit/config.toml`
-  - `.gitignore`
-  - `setup.ps1`
-- **Docs**
-  - `README.md`
-  - `docs/README.md`
-  - `docs/business-playbook.md`
-  - `docs/dashboard-v2-prompt.md`
-  - `docs/tesla-dashboard-blueprint.md`
-- **Self-contained previews (sample-data copies of the dashboards)**
-  - `dashboard_leadflow_preview.html`
-  - `dashboard_v2_preview.html`
-  - `dashboard_preview.html`
-- **Other files**
-  - `NEW_REQUIREMENTS_ADD_2026-07-10.txt`
-  - `requirements-new-files.txt`
+- **Demos / websites catalog**
+- **Data model**
+- **Current dashboard** (1 files)
+- **Backend (API)** (1 files)
+- **Engine** (7 files)
+- **Demo importers** (2 files)
+- **Automation & media** (3 files)
+- **Alt dashboards** (2 files)
+- **PWA shell** (2 files)
+- **Prompt templates** (3 files)
+- **Config & deps** (7 files)
+- **Docs** (6 files)
+- **Other files** (8 files)
 
 ---
+
+# Demos / websites we've built (catalog)
+
+The actual demo HTML lives in the user's Google Drive, Obsidian (Shipper) vault, and public
+GitHub repos - not embedded here (this snapshot was generated in an environment without access
+to pull them). `import_demos.py` and `import_github_demos.py` collect them into
+`output/demos/<slug>/index.html` on the user's machine, where the dashboard serves them.
+
+## From Google Drive / Shipper Vault
+| Demo (slug) | Niche | Source |
+| --- | --- | --- |
+| `salon-uccelli` | salon | Shipper Vault |
+| `degasperi` | plumbing (flagship demo) | Shipper Vault |
+| `wallys-super-service` | auto service (+ v2-imagery) | My Drive |
+| `lombardos-landscaping` | landscaping (+ v2-imagery) | My Drive |
+| `homestyle-desserts-bakery` | bakery (+ makeover / v2-imagery) | My Drive |
+
+## From GitHub (themortgagemaster01-eng, public repos)
+| Repo | Kind |
+| --- | --- |
+| `mahopac-demos` | collection of local-business demos (per-business subfolders) |
+| `castro-tax-demo` | tax business demo |
+| `xtrachange-demo` | business demo |
+| `mrnicks-demo` | business demo |
+| `obsidianlabs-demo` | Obsidian Labs demo |
+| `obsidianlabs` / `obsidian-labs` | agency site |
+| ~30 `*MortgageCalculator` repos | client mortgage-calculator sites |
+
+> To produce a bundle that also EMBEDS the demo HTML: run `import_demos.py` +
+> `import_github_demos.py` on the laptop first (so `output/demos/` is populated), then
+> regenerate this file - the generator includes `output/demos/*/index.html` when present.
+
+---
+
+# Data model (what the pipeline reads/writes)
+
+All runtime data lives under `output/` (gitignored). Schemas:
+
+- **`output/leads.csv`** (from `scraper.py`) - columns:
+  `name, type, town, address, phone, rating, review_count, website, place_id`
+- **`output/leads_graded.csv`** (from `grader.py`) - the above plus:
+  `perf_score` (0-100 Lighthouse mobile), `status` (ok | no_website | unreachable | api_error),
+  `is_hot_lead` (True if no website or perf_score <= 50)
+- **`output/demos/<slug>/index.html`** (from `demo_gen_local.py` or the importers) - one demo site per lead
+- **`output/outreach/<slug>.md`** (from `outreach_local.py` / `outreach_generator.py`) - draft emails, never sent
+- **`output/logs/approvals.csv`** - `timestamp, kind, identifier` (what the human approved; logging only)
+- **`output/logs/pipeline_run.log`**, `output/logs/nightly_runs.log` - run logs
+- **`chroma_db/`** - local RAG vector index built by `rag_setup.py` from the user's Drive/Obsidian docs
+- **`.env`** - secrets/config: `GOOGLE_API_KEY`, `OLLAMA_*`, `GDRIVE_PATH`, `OBSIDIAN_VAULT_PATH`,
+  `PHYSICAL_ADDRESS`, `UNSUBSCRIBE_LINK`, etc. (never committed)
+
+`fastapi_backend.py` only READS `output/`; the dashboards only call the backend. The engine
+WRITES `output/`. Verified end-to-end: the grader's CSV + demos + outreach flow correctly into
+the backend's `/api/status`, `/api/leads`, `/api/demos`, `/api/outreach`.
+
+---
+
+# Current dashboard
+
+## `dashboard_leadflow.html`  
+_(669 lines)_
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Obsidian Labs — Dashboard</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="theme-color" content="#f6f7f9" />
+  <style>
+    /* ============================================================
+       Obsidian Labs — LeadFlow-style light dashboard.
+       Single self-contained file. Same fastapi_backend on :8502,
+       no backend changes. Charts are hand-drawn inline SVG (CSP-safe).
+       ============================================================ */
+    :root {
+      --purple: #7c3aed;
+      --purple-600: #6d28d9;
+      --purple-50: #f3effe;
+      --purple-100: #ede9fe;
+      --blue: #3b82f6;
+      --teal: #14b8a6;
+      --orange: #f59e0b;
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --border: #eceef2;
+      --border-2: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --faint: #9ca3af;
+      --good-bg: #dcfce7; --good-fg: #15803d;
+      --new-bg: #dbeafe;  --new-fg: #1d4ed8;
+      --warn-bg: #fef3c7; --warn-fg: #b45309;
+      --bad-bg: #fee2e2;  --bad-fg: #b91c1c;
+      --gray-bg: #f1f5f9; --gray-fg: #475569;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased; letter-spacing: -0.011em;
+    }
+    .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+
+    /* ---------- sidebar ---------- */
+    .sidebar { background: var(--card); border-right: 1px solid var(--border); padding: 1.25rem 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; position: sticky; top: 0; height: 100vh; }
+    .logo { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; padding: 0.2rem 0.6rem 1rem; }
+    .logo .mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(150deg, var(--purple), #4f46e5); display: grid; place-items: center; color: #fff; font-size: 1.05rem; box-shadow: 0 6px 16px rgba(124,58,237,.35); }
+    .nav { display: flex; flex-direction: column; gap: 0.15rem; }
+    .nav button { display: flex; align-items: center; gap: 0.75rem; width: 100%; text-align: left; background: none; border: none; padding: 0.62rem 0.8rem; border-radius: 11px; font-size: 0.92rem; font-weight: 550; color: var(--muted); cursor: pointer; font-family: inherit; transition: all .15s; }
+    .nav button:hover { background: var(--bg); color: var(--text); }
+    .nav button.active { background: var(--purple-100); color: var(--purple-600); font-weight: 650; }
+    .nav .ico { width: 20px; height: 20px; flex: none; opacity: .9; }
+    .side-spacer { flex: 1; }
+    .promo { background: var(--purple-50); border: 1px solid var(--purple-100); border-radius: var(--radius); padding: 1.1rem; text-align: center; margin: 0.5rem 0.3rem; }
+    .promo .rocket { font-size: 1.5rem; }
+    .promo h4 { margin: 0.5rem 0 0.3rem; font-size: 1.02rem; }
+    .promo p { margin: 0 0 0.85rem; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
+    .profile { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 0.6rem 0.2rem; border-top: 1px solid var(--border); margin-top: 0.3rem; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 650; font-size: 0.85rem; flex: none; }
+    .profile .who { font-size: 0.86rem; font-weight: 600; line-height: 1.2; }
+    .profile .who small { display: block; color: var(--faint); font-weight: 400; font-size: 0.76rem; }
+
+    /* ---------- main ---------- */
+    .main { padding: 1.6rem 2rem 3rem; min-width: 0; }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .topbar h1 { margin: 0 0 0.25rem; font-size: 1.7rem; letter-spacing: -0.03em; }
+    .topbar .sub { margin: 0; color: var(--muted); font-size: 0.92rem; max-width: 40ch; }
+    .top-actions { display: flex; align-items: center; gap: 0.6rem; }
+    .chip { display: inline-flex; align-items: center; gap: 0.5rem; background: var(--card); border: 1px solid var(--border-2); border-radius: 11px; padding: 0.55rem 0.85rem; font-size: 0.85rem; font-weight: 550; cursor: pointer; }
+    .icon-btn { width: 42px; height: 42px; border-radius: 11px; background: var(--card); border: 1px solid var(--border-2); cursor: pointer; font-size: 1rem; position: relative; }
+    .icon-btn .badge { position: absolute; top: 9px; right: 10px; width: 7px; height: 7px; background: var(--purple); border-radius: 50%; }
+
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+
+    /* KPI row */
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; margin-bottom: 1.3rem; }
+    .kpi { padding: 1.15rem 1.2rem; }
+    .kpi .kico { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; font-size: 1.1rem; margin-bottom: 0.85rem; }
+    .kico.p { background: var(--purple-100); color: var(--purple-600); }
+    .kico.b { background: #dbeafe; color: var(--blue); }
+    .kico.t { background: #ccfbf1; color: #0f766e; }
+    .kico.o { background: #fef3c7; color: #b45309; }
+    .kpi .klabel { font-size: 0.85rem; color: var(--muted); }
+    .kpi .kvalue { font-size: 1.85rem; font-weight: 750; letter-spacing: -0.03em; margin: 0.1rem 0 0.35rem; font-variant-numeric: tabular-nums; }
+    .kpi .kdelta { font-size: 0.8rem; font-weight: 600; display: inline-flex; gap: 0.3rem; align-items: center; }
+    .kdelta.up { color: #15803d; } .kdelta.down { color: #b91c1c; } .kdelta.flat { color: var(--faint); }
+    .kpi .kspark { margin-top: 0.7rem; height: 34px; }
+    .kpi .kspark svg { width: 100%; height: 100%; display: block; }
+
+    /* charts row */
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.3rem; margin-bottom: 1.3rem; }
+    .panel { padding: 1.3rem 1.4rem; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+    .panel-head h3 { margin: 0; font-size: 1.12rem; letter-spacing: -0.02em; }
+    select.range { border: 1px solid var(--border-2); border-radius: 9px; padding: 0.4rem 0.6rem; font-size: 0.82rem; font-family: inherit; background: var(--card); color: var(--text); cursor: pointer; }
+    .area-wrap svg { width: 100%; height: auto; display: block; }
+    .donut-wrap { display: flex; gap: 1.4rem; align-items: center; flex-wrap: wrap; }
+    .donut-wrap svg { flex: none; }
+    .legend { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 0.55rem; }
+    .legend-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.6rem; font-size: 0.9rem; }
+    .legend-row .lname { display: flex; align-items: center; gap: 0.55rem; color: var(--text); }
+    .legend-row .swatch { width: 10px; height: 10px; border-radius: 50%; }
+    .legend-row .lpct { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .legend-row .lval { display: inline-flex; align-items: center; gap: 0.4rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .legend-row .lval .swatch { width: 8px; height: 8px; }
+
+    /* recent leads table */
+    .table-card { padding: 1.3rem 0; }
+    .table-head { display: flex; align-items: center; justify-content: space-between; padding: 0 1.4rem 0.9rem; }
+    .table-head h3 { margin: 0; font-size: 1.12rem; }
+    .link { color: var(--purple); font-weight: 600; font-size: 0.9rem; text-decoration: none; cursor: pointer; background: none; border: none; font-family: inherit; }
+    .tscroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 620px; }
+    thead th { text-align: left; padding: 0.7rem 1rem; color: var(--muted); font-weight: 600; font-size: 0.82rem; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: #fafbfc; }
+    thead th:first-child { padding-left: 1.4rem; }
+    tbody td { padding: 0.85rem 1rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tbody td:first-child { padding-left: 1.4rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: #fafafe; }
+    .cell-name { display: flex; align-items: center; gap: 0.7rem; }
+    .cell-name .avatar { width: 34px; height: 34px; font-size: 0.78rem; }
+    .cell-name .nm { font-weight: 600; }
+    .pill { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.78rem; font-weight: 600; }
+    .pill-good { background: var(--good-bg); color: var(--good-fg); }
+    .pill-new  { background: var(--new-bg);  color: var(--new-fg); }
+    .pill-warn { background: var(--warn-bg); color: var(--warn-fg); }
+    .pill-bad  { background: var(--bad-bg);  color: var(--bad-fg); }
+    .pill-gray { background: var(--gray-bg); color: var(--gray-fg); }
+    .kebab { background: none; border: none; color: var(--faint); cursor: pointer; font-size: 1.1rem; padding: 0 0.4rem; }
+    .val { font-weight: 650; font-variant-numeric: tabular-nums; }
+
+    /* bottom banner */
+    .banner { margin-top: 1.3rem; background: linear-gradient(100deg, var(--purple-100), #e0e7ff); border-radius: var(--radius); padding: 1.4rem 1.6rem; display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap; }
+    .banner .bico { width: 54px; height: 54px; border-radius: 14px; background: #fff; display: grid; place-items: center; font-size: 1.5rem; flex: none; box-shadow: 0 4px 12px rgba(124,58,237,.18); }
+    .banner .btxt { flex: 1; min-width: 220px; }
+    .banner h4 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+    .banner p { margin: 0; color: #4b5563; font-size: 0.9rem; }
+
+    .btn { border: none; border-radius: 11px; padding: 0.7rem 1.3rem; font-weight: 650; font-size: 0.9rem; cursor: pointer; font-family: inherit; background: var(--purple); color: #fff; box-shadow: 0 6px 16px rgba(124,58,237,.3); transition: all .15s; }
+    .btn:hover { background: var(--purple-600); transform: translateY(-1px); }
+    .btn.block { width: 100%; }
+    .btn.small { padding: 0.45rem 0.9rem; font-size: 0.82rem; }
+    .btn.secondary { background: #fff; color: var(--purple-600); border: 1px solid var(--purple-100); box-shadow: none; }
+    .run-status { color: var(--muted); font-size: 0.85rem; margin: 0.8rem 0 0; }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+    .empty { color: var(--faint); font-size: 0.9rem; padding: 1rem 1.4rem; }
+    .subpage { display: none; }
+    .subpage .panel { margin-bottom: 1.3rem; }
+
+    /* demo modal */
+    #modal { position: fixed; inset: 0; background: rgba(17,24,39,.5); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; z-index: 70; padding: 1rem; }
+    #modal.open { display: flex; }
+    .modal-card { background: var(--card); border-radius: var(--radius); width: min(880px, 96vw); max-height: 92vh; overflow: hidden; display: flex; flex-direction: column; }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.3rem; border-bottom: 1px solid var(--border); }
+    .modal-head h3 { margin: 0; font-size: 1.05rem; }
+    .modal-body { padding: 1.1rem 1.3rem; overflow: auto; }
+    .device-toggle { display: flex; gap: 0.4rem; margin-bottom: 0.85rem; }
+    .device-toggle button { padding: 0.34rem 0.85rem; border-radius: 9999px; border: 1px solid var(--border-2); background: #fff; color: var(--muted); cursor: pointer; font-size: 0.78rem; }
+    .device-toggle button.active { background: var(--purple); color: #fff; border-color: var(--purple); }
+    .preview-frame-wrap { display: flex; justify-content: center; }
+    iframe#demo-preview { border: 1px solid var(--border); border-radius: 12px; width: 100%; height: 520px; background: #fff; }
+
+    /* chat */
+    #chat-toggle { position: fixed; bottom: 22px; right: 22px; width: 54px; height: 54px; border-radius: 50%; background: var(--purple); color: #fff; border: none; font-size: 1.3rem; cursor: pointer; box-shadow: 0 8px 24px rgba(124,58,237,.4); z-index: 60; }
+    #chat-panel { position: fixed; bottom: 86px; right: 22px; width: 340px; max-height: 480px; background: var(--card); border: 1px solid var(--border-2); border-radius: var(--radius); z-index: 60; display: none; flex-direction: column; overflow: hidden; box-shadow: 0 18px 50px rgba(16,24,40,.25); }
+    #chat-panel.open { display: flex; }
+    #chat-header { padding: 0.8rem 1rem; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid var(--border); background: var(--purple); color: #fff; }
+    #chat-messages { flex: 1; overflow-y: auto; padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.85rem; }
+    .chat-msg { padding: 0.5rem 0.75rem; border-radius: 13px; max-width: 86%; line-height: 1.45; }
+    .chat-msg.user { align-self: flex-end; background: var(--purple); color: #fff; }
+    .chat-msg.bot { align-self: flex-start; background: #f1f0f7; color: var(--text); }
+    #chat-input-row { display: flex; border-top: 1px solid var(--border); }
+    #chat-input { flex: 1; border: none; background: transparent; color: var(--text); padding: 0.8rem; font-size: 0.85rem; font-family: inherit; }
+    #chat-send { border: none; background: var(--purple); color: #fff; padding: 0 1.1rem; cursor: pointer; font-family: inherit; }
+
+    :focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+
+    /* ---------- responsive ---------- */
+    @media (max-width: 1050px) { .kpis { grid-template-columns: repeat(2, 1fr); } .charts { grid-template-columns: 1fr; } }
+    @media (max-width: 820px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; flex-direction: row; align-items: center; gap: 0.5rem; overflow-x: auto; padding: 0.7rem 0.9rem; }
+      .logo { padding: 0 0.5rem; font-size: 1rem; }
+      .nav { flex-direction: row; gap: 0.2rem; }
+      .nav button { padding: 0.45rem 0.7rem; white-space: nowrap; }
+      .nav .ico { display: none; }
+      .side-spacer, .promo, .profile { display: none; }
+      .main { padding: 1.2rem 1rem 3rem; }
+    }
+    @media (max-width: 520px) { .kpis { grid-template-columns: 1fr 1fr; gap: 0.8rem; } .topbar h1 { font-size: 1.4rem; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- ==================== SIDEBAR ==================== -->
+    <aside class="sidebar">
+      <div class="logo"><span class="mark">◆</span> Obsidian Labs</div>
+      <nav class="nav" id="nav">
+        <button data-page="dashboard" class="active"><span class="ico">▦</span> Dashboard</button>
+        <button data-page="leads"><span class="ico">☰</span> Leads</button>
+        <button data-page="demos"><span class="ico">▤</span> Demos</button>
+        <button data-page="outreach"><span class="ico">✉</span> Outreach</button>
+        <button data-page="dashboard"><span class="ico">◔</span> Analytics</button>
+        <button id="nav-settings"><span class="ico">⚙</span> Settings</button>
+      </nav>
+      <div class="side-spacer"></div>
+      <div class="promo">
+        <div class="rocket">🚀</div>
+        <h4>Grow your pipeline</h4>
+        <p>Gather new local businesses and build demos automatically — 100% local.</p>
+        <button class="btn block" id="promo-run">Run Pipeline</button>
+      </div>
+      <div class="profile">
+        <div class="avatar" style="background:#7c3aed;">RC</div>
+        <div class="who">Robert Castro<small>themortgagemaster01@gmail.com</small></div>
+      </div>
+    </aside>
+
+    <!-- ==================== MAIN ==================== -->
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h1>Dashboard</h1>
+          <p class="sub">Welcome back, Robert! Here's what's happening with your leads.</p>
+        </div>
+        <div class="top-actions">
+          <button class="chip" id="range-chip">📅 <span id="range-label">This month</span></button>
+          <button class="icon-btn" id="settings-btn" title="Settings / backend URL">🔔<span class="badge"></span></button>
+        </div>
+      </div>
+
+      <!-- ===== DASHBOARD PAGE ===== -->
+      <section id="page-dashboard">
+        <!-- KPI cards -->
+        <div class="kpis">
+          <div class="card kpi">
+            <div class="kico p">👥</div>
+            <div class="klabel">Total Leads</div>
+            <div class="kvalue" id="k-leads">–</div>
+            <div class="kdelta flat" id="d-leads">—</div>
+            <div class="kspark" id="s-leads"></div>
+          </div>
+          <div class="card kpi">
+            <div class="kico b">🎯</div>
+            <div class="klabel">Hot Leads</div>
+            <div class="kvalue" id="k-hot">–</div>
+            <div class="kdelta flat" id="d-hot">—</div>
+            <div class="kspark" id="s-hot"></div>
+          </div>
+          <div class="card kpi">
+            <div class="kico t">📤</div>
+            <div class="klabel">Demos Generated</div>
+            <div class="kvalue" id="k-demos">–</div>
+            <div class="kdelta flat" id="d-demos">—</div>
+            <div class="kspark" id="s-demos"></div>
+          </div>
+          <div class="card kpi">
+            <div class="kico o">📝</div>
+            <div class="klabel">Outreach Drafts</div>
+            <div class="kvalue" id="k-drafts">–</div>
+            <div class="kdelta flat" id="d-drafts">—</div>
+            <div class="kspark" id="s-drafts"></div>
+          </div>
+        </div>
+
+        <!-- charts -->
+        <div class="charts">
+          <div class="card panel area-wrap">
+            <div class="panel-head">
+              <h3>Lead Growth</h3>
+              <select class="range" id="growth-range">
+                <option value="8">This Month</option>
+                <option value="30">Last 30 pts</option>
+                <option value="5">Last 5 pts</option>
+              </select>
+            </div>
+            <div id="area-chart"></div>
+          </div>
+          <div class="card panel">
+            <div class="panel-head"><h3>Leads by Niche</h3></div>
+            <div class="donut-wrap">
+              <div id="donut-chart"></div>
+              <div class="legend" id="donut-legend"></div>
+            </div>
+          </div>
+        </div>
+
+        <p class="run-status" id="run-status">Click a lead to preview its generated demo site.</p>
+
+        <!-- recent leads -->
+        <div class="card table-card">
+          <div class="table-head">
+            <h3>Recent Leads</h3>
+            <button class="link" data-goto="leads">View all leads</button>
+          </div>
+          <div class="tscroll">
+            <table>
+              <thead><tr><th>#</th><th>Name</th><th>Niche</th><th>Status</th><th>Town</th><th>Value</th><th></th></tr></thead>
+              <tbody id="recent-tbody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- bottom banner -->
+        <div class="banner">
+          <div class="bico">🎯</div>
+          <div class="btxt">
+            <h4>Turn hot leads into revenue</h4>
+            <p>Approve a demo and its outreach draft, then send it yourself. Nothing here ever auto-sends.</p>
+          </div>
+          <button class="btn" id="banner-run">Run Pipeline</button>
+        </div>
+      </section>
+
+      <!-- ===== LEADS PAGE ===== -->
+      <section id="page-leads" class="subpage">
+        <div class="card table-card">
+          <div class="table-head"><h3>All Leads</h3></div>
+          <div class="tscroll">
+            <table>
+              <thead><tr><th>#</th><th>Name</th><th>Niche</th><th>Status</th><th>Town</th><th>Value</th><th></th></tr></thead>
+              <tbody id="all-tbody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== DEMOS PAGE ===== -->
+      <section id="page-demos" class="subpage">
+        <div class="card panel"><div class="panel-head"><h3>Demos</h3></div><div id="demos-list" class="muted">Loading…</div></div>
+      </section>
+
+      <!-- ===== OUTREACH PAGE ===== -->
+      <section id="page-outreach" class="subpage">
+        <div class="card panel">
+          <div class="panel-head"><h3>Outreach Drafts</h3></div>
+          <p class="muted">Drafts only — approving here just logs the approval. Sending is a separate, deliberate step outside this dashboard.</p>
+          <div id="outreach-list" class="muted">Loading…</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- demo preview modal -->
+  <div id="modal">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="modal-title">Demo preview</h3><button class="kebab" id="modal-close" style="font-size:1.4rem;">✕</button></div>
+      <div class="modal-body">
+        <div class="device-toggle">
+          <button data-device="Desktop" class="active">Desktop</button>
+          <button data-device="Tablet">Tablet</button>
+          <button data-device="Mobile">Mobile</button>
+        </div>
+        <div class="preview-frame-wrap">
+          <iframe id="demo-preview" title="Demo site preview"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- chat -->
+  <button id="chat-toggle" title="Ask the Obsidian Labs assistant">💬</button>
+  <div id="chat-panel">
+    <div id="chat-header">Obsidian Labs Assistant</div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <input id="chat-input" type="text" placeholder="Ask about your pipeline…" />
+      <button id="chat-send">Send</button>
+    </div>
+  </div>
+
+  <script>
+    /* =================================================================
+       Config
+       ================================================================= */
+    function getApiBase() { return localStorage.getItem("obsidian_api_base") || "http://localhost:8502"; }
+    function setApiBase(url) { localStorage.setItem("obsidian_api_base", url.replace(/\/$/, "")); }
+    function getRevPer() { return Number(localStorage.getItem("obsidian_rev_per")) || 2500; }
+    function setRevPer(v) { localStorage.setItem("obsidian_rev_per", String(v)); }
+
+    let API_BASE = getApiBase();
+    let leadsCache = [];
+    let currentSlug = null;
+    let currentDevice = "Desktop";
+    let currentDemoHtml = "";
+
+    const NICHE_COLORS = ["#7c3aed", "#3b82f6", "#14b8a6", "#f59e0b", "#ec4899", "#94a3b8"];
+
+    /* ---------- helpers ---------- */
+    function money(n) { return "$" + Math.round(n).toLocaleString("en-US"); }
+    function slugify(name) { return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "lead"; }
+    function isHot(l) { return String(l.is_hot_lead).toLowerCase() === "true"; }
+    function initials(name) { return (name || "?").split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase() || "?"; }
+    function hashColor(s) { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return `hsl(${Math.abs(h) % 360} 55% 55%)`; }
+    function statusPill(l) {
+      const s = l.status, perf = Number(l.perf_score) || 0;
+      if (s === "no_website") return ["No Website", "pill-bad"];
+      if (s === "unreachable") return ["Unreachable", "pill-bad"];
+      if (s === "api_error") return ["Grade Error", "pill-gray"];
+      if (isHot(l)) return ["Hot", "pill-new"];
+      if (perf <= 50) return ["Needs Work", "pill-warn"];
+      return ["Healthy", "pill-good"];
+    }
+
+    /* ---------- API (same endpoints as v1/v2) ---------- */
+    async function apiGet(path) {
+      const res = await fetch(API_BASE + path);
+      if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+      return res.json();
+    }
+    async function apiPost(path, body) {
+      const res = await fetch(API_BASE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+      if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+      return res.json();
+    }
+
+    /* ---------- history (real, accumulates in localStorage) ---------- */
+    function getHistory() { try { return JSON.parse(localStorage.getItem("obsidian_history") || "[]"); } catch (e) { return []; } }
+    function pushHistory(s) {
+      const h = getHistory();
+      const last = h[h.length - 1];
+      const snap = { t: Date.now(), leads: s.leads, hot: s.hot_leads, demos: s.demos, drafts: s.outreach_drafts };
+      // only append if something changed or >1h since last, to avoid spam
+      if (!last || last.leads !== snap.leads || last.hot !== snap.hot || last.demos !== snap.demos || last.drafts !== snap.drafts || (snap.t - last.t) > 3600000) {
+        h.push(snap); while (h.length > 40) h.shift();
+        localStorage.setItem("obsidian_history", JSON.stringify(h));
+      }
+      return h;
+    }
+
+    /* ================= SVG chart helpers ================= */
+    function smoothPath(pts) {
+      if (pts.length < 2) return pts.length ? `M${pts[0].x},${pts[0].y}` : "";
+      let d = `M${pts[0].x},${pts[0].y}`;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+        const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+        d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x},${p2.y}`;
+      }
+      return d;
+    }
+    function drawSpark(elId, values, color) {
+      const el = document.getElementById(elId);
+      if (!values || values.length < 2) { el.innerHTML = `<svg viewBox="0 0 100 34" preserveAspectRatio="none"></svg>`; return; }
+      const W = 100, H = 34, min = Math.min(...values), max = Math.max(...values), rng = (max - min) || 1;
+      const pts = values.map((v, i) => ({ x: (i / (values.length - 1)) * W, y: H - 3 - ((v - min) / rng) * (H - 8) }));
+      const line = smoothPath(pts);
+      const gid = "g_" + elId;
+      el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs><linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stop-color="${color}" stop-opacity=".25"/><stop offset="1" stop-color="${color}" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path d="${line} L${W},${H} L0,${H} Z" fill="url(#${gid})"/>
+        <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>`;
+    }
+    function niceMax(v) { if (v <= 5) return 5; const p = Math.pow(10, Math.floor(Math.log10(v))); const f = v / p; const n = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10; return n * p; }
+    function drawArea(elId, hist, count) {
+      const el = document.getElementById(elId);
+      const data = hist.slice(-count);
+      if (data.length < 2) { el.innerHTML = `<div class="empty" style="padding:2.5rem 0;text-align:center;">Growth appears here as the dashboard records snapshots over time.<br>Run the pipeline a few times to fill it in.</div>`; return; }
+      const W = 580, H = 240, padL = 34, padR = 12, padT = 16, padB = 26;
+      const leads = data.map(d => d.leads), hot = data.map(d => d.hot);
+      const maxY = niceMax(Math.max(...leads, 1));
+      const xAt = i => padL + (i / (data.length - 1)) * (W - padL - padR);
+      const yAt = v => padT + (1 - v / maxY) * (H - padT - padB);
+      const mk = arr => arr.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
+      const lp = smoothPath(mk(leads)), hp = smoothPath(mk(hot));
+      const base = H - padB;
+      const grid = [0, .25, .5, .75, 1].map(f => { const y = padT + f * (H - padT - padB); const val = Math.round(maxY * (1 - f)); return `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="#eef0f3"/><text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#9ca3af">${val}</text>`; }).join("");
+      const step = Math.max(1, Math.ceil(data.length / 6));
+      const xlabels = data.map((d, i) => (i % step === 0 || i === data.length - 1) ? `<text x="${xAt(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${d.label || (i + 1)}</text>` : "").join("");
+      const lastX = xAt(data.length - 1), lastY = yAt(leads[leads.length - 1]);
+      el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+        <defs><linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7c3aed" stop-opacity=".28"/><stop offset="1" stop-color="#7c3aed" stop-opacity="0"/></linearGradient></defs>
+        ${grid}
+        <path d="${lp} L${lastX},${base} L${padL},${base} Z" fill="url(#areaGrad)"/>
+        <path d="${hp}" fill="none" stroke="#c4b5fd" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="${lp}" fill="none" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${lastX}" cy="${lastY}" r="5" fill="#7c3aed" stroke="#fff" stroke-width="2"/>
+        <g><rect x="${Math.min(lastX - 26, W - 58)}" y="${Math.max(lastY - 34, 2)}" width="52" height="22" rx="6" fill="#fff" stroke="#e5e7eb"/><text x="${Math.min(lastX, W - 32)}" y="${Math.max(lastY - 19, 17)}" text-anchor="middle" font-size="11" font-weight="700" fill="#111827">${leads[leads.length - 1]}</text></g>
+        ${xlabels}
+      </svg>`;
+    }
+    function drawDonut(elId, legendId, segments) {
+      const el = document.getElementById(elId), leg = document.getElementById(legendId);
+      const total = segments.reduce((a, s) => a + s.value, 0);
+      const R = 70, SW = 22, C = 2 * Math.PI * R, cx = 90, cy = 90;
+      if (!total) { el.innerHTML = `<svg width="180" height="180"><circle cx="90" cy="90" r="${R}" fill="none" stroke="#eef0f3" stroke-width="${SW}"/></svg>`; leg.innerHTML = `<div class="empty">No leads yet.</div>`; return; }
+      let off = 0;
+      const arcs = segments.map(s => {
+        const len = (s.value / total) * C;
+        const seg = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}" stroke-width="${SW}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+        off += len; return seg;
+      }).join("");
+      el.innerHTML = `<svg width="180" height="180" viewBox="0 0 180 180">${arcs}
+        <text x="90" y="86" text-anchor="middle" font-size="26" font-weight="750" fill="#111827">${total}</text>
+        <text x="90" y="106" text-anchor="middle" font-size="12" fill="#9ca3af">Total</text></svg>`;
+      leg.innerHTML = segments.map(s => {
+        const pct = Math.round((s.value / total) * 100);
+        return `<div class="legend-row"><span class="lname"><span class="swatch" style="background:${s.color}"></span>${s.label}</span><span class="lpct">${pct}%</span><span class="lval"><span class="swatch" style="background:${s.color}"></span>${s.value}</span></div>`;
+      }).join("");
+    }
+
+    /* ================= data rendering ================= */
+    function setDelta(elId, hist, key) {
+      const el = document.getElementById(elId);
+      if (hist.length < 2) { el.className = "kdelta flat"; el.textContent = "—"; return; }
+      const prev = hist[hist.length - 2][key], now = hist[hist.length - 1][key];
+      if (!prev) { el.className = "kdelta flat"; el.textContent = now ? "▲ new" : "—"; return; }
+      const pct = ((now - prev) / prev) * 100, up = pct >= 0;
+      el.className = "kdelta " + (Math.abs(pct) < 0.1 ? "flat" : up ? "up" : "down");
+      el.textContent = `${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}% vs last run`;
+    }
+    async function loadStatus() {
+      try {
+        const s = await apiGet("/api/status");
+        document.getElementById("k-leads").textContent = s.leads;
+        document.getElementById("k-hot").textContent = s.hot_leads;
+        document.getElementById("k-demos").textContent = s.demos;
+        document.getElementById("k-drafts").textContent = s.outreach_drafts;
+        const h = pushHistory(s);
+        drawSpark("s-leads", h.map(x => x.leads), "#7c3aed");
+        drawSpark("s-hot", h.map(x => x.hot), "#3b82f6");
+        drawSpark("s-demos", h.map(x => x.demos), "#14b8a6");
+        drawSpark("s-drafts", h.map(x => x.drafts), "#f59e0b");
+        setDelta("d-leads", h, "leads"); setDelta("d-hot", h, "hot"); setDelta("d-demos", h, "demos"); setDelta("d-drafts", h, "drafts");
+        drawArea("area-chart", h, Number(document.getElementById("growth-range").value));
+      } catch (e) {
+        document.getElementById("run-status").textContent = "Backend unreachable — is fastapi_backend running on :8502?";
+      }
+    }
+    async function loadLeads() {
+      try { leadsCache = await apiGet("/api/leads"); } catch (e) { leadsCache = []; }
+      renderDonut();
+      renderTable("recent-tbody", leadsCache.slice(0, 6));
+      renderTable("all-tbody", leadsCache);
+    }
+    function renderDonut() {
+      const counts = {};
+      leadsCache.forEach(l => { const k = (l.type || "other").trim() || "other"; counts[k] = (counts[k] || 0) + 1; });
+      const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const top = entries.slice(0, 5);
+      const restVal = entries.slice(5).reduce((a, e) => a + e[1], 0);
+      const segs = top.map((e, i) => ({ label: e[0].replace(/\b\w/g, c => c.toUpperCase()), value: e[1], color: NICHE_COLORS[i] }));
+      if (restVal) segs.push({ label: "Other", value: restVal, color: NICHE_COLORS[5] });
+      drawDonut("donut-chart", "donut-legend", segs);
+    }
+    function rowHTML(l, i) {
+      const [label, cls] = statusPill(l);
+      const val = isHot(l) ? money(getRevPer()) : "—";
+      return `<tr data-slug="${slugify(l.name)}">
+        <td>${i + 1}</td>
+        <td><div class="cell-name"><span class="avatar" style="background:${hashColor(l.name || "")}">${initials(l.name)}</span><span class="nm">${l.name || ""}</span></div></td>
+        <td>${(l.type || "").replace(/\b\w/g, c => c.toUpperCase())}</td>
+        <td><span class="pill ${cls}">${label}</span></td>
+        <td>${l.town || "—"}</td>
+        <td class="val">${val}</td>
+        <td><button class="kebab" title="Preview demo">⋮</button></td>
+      </tr>`;
+    }
+    function renderTable(tbodyId, rows) {
+      const tb = document.getElementById(tbodyId);
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">No leads yet. Run the pipeline to gather some.</td></tr>`; return; }
+      tb.innerHTML = rows.map((l, i) => rowHTML(l, i)).join("");
+      tb.querySelectorAll("tr[data-slug]").forEach(tr => tr.addEventListener("click", () => openDemo(tr.dataset.slug)));
+    }
+
+    /* ---------- demo modal ---------- */
+    async function openDemo(slug) {
+      currentSlug = slug;
+      document.getElementById("modal-title").textContent = slug;
+      document.getElementById("modal").classList.add("open");
+      const iframe = document.getElementById("demo-preview");
+      iframe.srcdoc = `<p style="font-family:system-ui;color:#999;padding:2rem;">Loading…</p>`;
+      try { const demo = await apiGet(`/api/demos/${slug}`); currentDemoHtml = demo.html; renderPreview(); }
+      catch (e) { currentDemoHtml = ""; iframe.srcdoc = `<p style="font-family:system-ui;color:#999;padding:2rem;">No demo generated yet for “${slug}”. Run the pipeline to build one.</p>`; }
+    }
+    function renderPreview() {
+      const widths = { Desktop: "100%", Tablet: "768px", Mobile: "390px" };
+      const iframe = document.getElementById("demo-preview");
+      iframe.style.width = widths[currentDevice]; iframe.style.margin = currentDevice === "Desktop" ? "0" : "0 auto";
+      if (currentDemoHtml) iframe.srcdoc = currentDemoHtml;
+    }
+    document.querySelectorAll(".device-toggle button").forEach(b => b.addEventListener("click", () => {
+      document.querySelectorAll(".device-toggle button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active"); currentDevice = b.dataset.device; renderPreview();
+    }));
+    document.getElementById("modal-close").addEventListener("click", () => document.getElementById("modal").classList.remove("open"));
+    document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") document.getElementById("modal").classList.remove("open"); });
+
+    /* ---------- demos + outreach pages ---------- */
+    async function loadDemos() {
+      const el = document.getElementById("demos-list");
+      try { const d = await apiGet("/api/demos"); el.innerHTML = d.length ? d.map(x => `<div class="legend-row" style="grid-template-columns:1fr auto;padding:.6rem 0;border-bottom:1px solid var(--border);cursor:pointer" data-slug="${x.slug}"><strong>${x.slug}</strong><button class="btn small secondary">Preview</button></div>`).join("") : `<div class="empty">No demos generated yet.</div>`; el.querySelectorAll("[data-slug]").forEach(r => r.addEventListener("click", () => openDemo(r.dataset.slug))); }
+      catch (e) { el.innerHTML = `<div class="empty">Backend unreachable.</div>`; }
+    }
+    async function loadOutreach() {
+      const el = document.getElementById("outreach-list");
+      try {
+        const drafts = await apiGet("/api/outreach");
+        if (!drafts.length) { el.innerHTML = `<div class="empty">No outreach drafts yet.</div>`; return; }
+        let html = "";
+        for (const d of drafts) { const full = await apiGet(`/api/outreach/${d.slug}`); html += `<div class="card panel" style="margin-bottom:.8rem"><strong>${d.slug}</strong><pre style="white-space:pre-wrap;font-family:inherit;font-size:.85rem;color:#374151;line-height:1.5;margin:.6rem 0 .8rem">${full.content.replace(/</g, "&lt;")}</pre><button class="btn small" data-approve="${d.slug}">Approve</button></div>`; }
+        el.innerHTML = html;
+        el.querySelectorAll("[data-approve]").forEach(b => b.addEventListener("click", async () => { await apiPost("/api/approve", { kind: "outreach_approved", identifier: b.dataset.approve }); b.textContent = "Approved ✓"; b.disabled = true; }));
+      } catch (e) { el.innerHTML = `<div class="empty">Backend unreachable.</div>`; }
+    }
+
+    /* ---------- navigation ---------- */
+    function goToPage(page) {
+      document.querySelectorAll("#nav button[data-page]").forEach(b => b.classList.toggle("active", b.dataset.page === page));
+      ["dashboard", "leads", "demos", "outreach"].forEach(p => { document.getElementById(`page-${p}`).style.display = p === page ? "" : "none"; });
+      if (page === "demos") loadDemos();
+      if (page === "outreach") loadOutreach();
+    }
+    document.querySelectorAll("#nav button[data-page]").forEach(b => b.addEventListener("click", () => goToPage(b.dataset.page)));
+    document.querySelectorAll("[data-goto]").forEach(b => b.addEventListener("click", () => goToPage(b.dataset.goto)));
+    document.getElementById("growth-range").addEventListener("change", () => drawArea("area-chart", getHistory(), Number(document.getElementById("growth-range").value)));
+
+    /* ---------- run pipeline ---------- */
+    async function runPipeline() {
+      const st = document.getElementById("run-status"); st.textContent = "Starting pipeline in the background…";
+      try { await apiPost("/api/run-pipeline", { stage: "all", towns: ["Mahopac", "Carmel"], niches: ["dentist", "roofer"], limit: 5 }); st.textContent = "Pipeline started. Check output/logs/pipeline_run.log, or refresh shortly."; }
+      catch (e) { st.textContent = "Failed to start — is the backend running?"; }
+    }
+    document.getElementById("promo-run").addEventListener("click", runPipeline);
+    document.getElementById("banner-run").addEventListener("click", runPipeline);
+
+    /* ---------- settings (backend URL + price per deal) ---------- */
+    function openSettings() {
+      const next = prompt("Backend URL (fastapi_backend address — e.g. https://xxxx.ngrok-free.app or http://localhost:8502):", getApiBase());
+      if (next && next.trim()) { setApiBase(next.trim()); API_BASE = getApiBase(); refreshAll(); }
+    }
+    document.getElementById("settings-btn").addEventListener("click", openSettings);
+    document.getElementById("nav-settings").addEventListener("click", openSettings);
+    document.getElementById("range-chip").addEventListener("click", () => {
+      const cur = getRevPer(); const n = Number((prompt("Average price per closed deal (used for the Value column):", cur) || "").replace(/[^0-9.]/g, ""));
+      if (n > 0) { setRevPer(n); renderTable("recent-tbody", leadsCache.slice(0, 6)); renderTable("all-tbody", leadsCache); }
+    });
+
+    /* ---------- chat ---------- */
+    const chatPanel = document.getElementById("chat-panel"), chatMessages = document.getElementById("chat-messages"), chatInput = document.getElementById("chat-input");
+    document.getElementById("chat-toggle").addEventListener("click", () => chatPanel.classList.toggle("open"));
+    function addChatMsg(t, who) { const d = document.createElement("div"); d.className = `chat-msg ${who}`; d.textContent = t; chatMessages.appendChild(d); chatMessages.scrollTop = chatMessages.scrollHeight; }
+    async function sendChat() {
+      const msg = chatInput.value.trim(); if (!msg) return;
+      addChatMsg(msg, "user"); chatInput.value = ""; addChatMsg("Thinking…", "bot");
+      try { const res = await apiPost("/api/chat", { message: msg }); chatMessages.lastChild.textContent = res.reply || "(no response)"; }
+      catch (e) { chatMessages.lastChild.textContent = "Couldn't reach the assistant — is fastapi_backend + Ollama running?"; }
+    }
+    document.getElementById("chat-send").addEventListener("click", sendChat);
+    chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
+
+    /* ---------- PWA + boot ---------- */
+    if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    function refreshAll() { loadStatus(); loadLeads(); }
+    addChatMsg("Hi! I'm your pipeline assistant. Ask about your hot leads, drafts, or pricing.", "bot");
+    refreshAll();
+    setInterval(loadStatus, 15000);
+  </script>
+</body>
+</html>
+
+```
+
+# Backend (API)
+
+## `fastapi_backend.py`  
+_(243 lines)_
+
+```python
+#!/usr/bin/env python3
+"""
+Obsidian Labs - FastAPI backend for tesla_style_dashboard_with_chat.html
+Serves live data from the same output/ folder dashboard.py reads, and shares the
+same approvals log. The chat widget calls local Ollama directly - no external API.
+Run:
+
+    pip install fastapi uvicorn
+    uvicorn fastapi_backend:app --port 8502 --reload
+"""
+from __future__ import annotations
+
+import csv
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
+ROOT = Path(__file__).resolve().parent
+OUTPUT_DIR = ROOT / "output"
+DEMOS_DIR = OUTPUT_DIR / "demos"
+OUTREACH_DIR = OUTPUT_DIR / "outreach"
+LOGS_DIR = OUTPUT_DIR / "logs"
+LEADS_GRADED_CSV = OUTPUT_DIR / "leads_graded.csv"
+APPROVALS_LOG = LOGS_DIR / "approvals.csv"
+PIPELINE_RUN_LOG = LOGS_DIR / "pipeline_run.log"
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "qwen2.5:14b-instruct-q4_K_M"
+
+app = FastAPI(title="Obsidian Labs API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
+    return slug or "lead"
+
+
+def read_leads() -> list[dict]:
+    if not LEADS_GRADED_CSV.exists():
+        return []
+    with LEADS_GRADED_CSV.open(newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def list_demo_slugs() -> list[str]:
+    if not DEMOS_DIR.exists():
+        return []
+    return sorted(
+        p.name
+        for p in DEMOS_DIR.iterdir()
+        if p.is_dir() and (p / "index.html").exists()
+    )
+
+
+def list_outreach_slugs() -> list[str]:
+    if not OUTREACH_DIR.exists():
+        return []
+    return sorted(p.stem for p in OUTREACH_DIR.glob("*.md"))
+
+
+@app.get("/api/status")
+def status():
+    leads = read_leads()
+    hot = sum(
+        1
+        for l in leads
+        if str(l.get("is_hot_lead", "")).lower() in ("true", "1", "yes")
+    )
+    return {
+        "leads": len(leads),
+        "hot_leads": hot,
+        "demos": len(list_demo_slugs()),
+        "outreach_drafts": len(list_outreach_slugs()),
+        "pricing": {
+            "starter": 1495,
+            "professional": 2500,
+            "business_growth": "4500+",
+        },
+        "guardrails": "Runs 100% locally. Nothing auto-sends.",
+    }
+
+
+@app.get("/api/leads")
+def get_leads():
+    return read_leads()
+
+
+@app.get("/api/demos")
+def get_demos():
+    return [{"slug": s} for s in list_demo_slugs()]
+
+
+@app.get("/api/demos/{slug}")
+def get_demo_html(slug: str):
+    demo_file = DEMOS_DIR / slug / "index.html"
+    if not demo_file.exists():
+        raise HTTPException(status_code=404, detail=f"No demo found for '{slug}'")
+    return {"slug": slug, "html": demo_file.read_text(encoding="utf-8")}
+
+
+@app.get("/api/outreach")
+def get_outreach():
+    return [{"slug": s} for s in list_outreach_slugs()]
+
+
+@app.get("/api/outreach/{slug}")
+def get_outreach_draft(slug: str):
+    draft_file = OUTREACH_DIR / f"{slug}.md"
+    if not draft_file.exists():
+        raise HTTPException(
+            status_code=404, detail=f"No outreach draft found for '{slug}'"
+        )
+    return {"slug": slug, "content": draft_file.read_text(encoding="utf-8")}
+
+
+class ApprovalRequest(BaseModel):
+    kind: str
+    identifier: str
+
+
+@app.post("/api/approve")
+def approve(req: ApprovalRequest):
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    is_new = not APPROVALS_LOG.exists()
+    with APPROVALS_LOG.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if is_new:
+            writer.writerow(["timestamp", "kind", "identifier"])
+        writer.writerow(
+            [
+                dt.datetime.now().isoformat(timespec="seconds"),
+                req.kind,
+                req.identifier,
+            ]
+        )
+    return {"status": "logged", "kind": req.kind, "identifier": req.identifier}
+
+
+class RunPipelineRequest(BaseModel):
+    stage: str = "all"
+    towns: list[str] = ["Mahopac", "Carmel"]
+    niches: list[str] = ["dentist", "roofer"]
+    limit: int = 5
+
+
+@app.post("/api/run-pipeline")
+def run_pipeline(req: RunPipelineRequest):
+    cmd = [sys.executable, "pipeline.py", "--stage", req.stage]
+    if req.stage in ("all", "scrape"):
+        cmd += [
+            "--towns",
+            *req.towns,
+            "--niches",
+            *req.niches,
+            "--limit",
+            str(req.limit),
+        ]
+
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    with PIPELINE_RUN_LOG.open("a", encoding="utf-8") as log_f:
+        log_f.write(
+            f"\n\n=== {dt.datetime.now().isoformat(timespec='seconds')} "
+            f"- {' '.join(cmd)} ===\n"
+        )
+        subprocess.Popen(
+            cmd, cwd=str(ROOT), stdout=log_f, stderr=subprocess.STDOUT
+        )
+
+    return {"status": "started", "command": " ".join(cmd)}
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/api/chat")
+def chat(req: ChatRequest):
+    if requests is None:
+        raise HTTPException(
+            status_code=500, detail="`requests` not installed on the backend."
+        )
+
+    live_status = status()
+    system_context = (
+        "You are the Obsidian Labs assistant embedded in the pipeline dashboard. "
+        "You help the site owner understand their local lead-gen pipeline. Be concise, "
+        "concrete, and never claim to have sent anything - this system never auto-sends. "
+        f"Live stats right now: {json.dumps(live_status)}. "
+        "Pricing: Starter $1,495 / Professional $2,500 (most popular) / Business Growth $4,500+."
+    )
+
+    prompt = f"{system_context}\n\nUser question: {req.message}\n\nAnswer:"
+
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {"reply": data.get("response", "").strip()}
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Could not reach local Ollama at {OLLAMA_URL} - "
+                f"is `ollama serve` running? ({e})"
+            ),
+        )
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "Obsidian Labs API",
+        "docs": "/docs",
+        "note": (
+            "Serves tesla_style_dashboard_with_chat.html. "
+            "Streamlit dashboard.py still works independently."
+        ),
+    }
+
+```
 
 # Engine
 
@@ -1785,36 +2735,600 @@ main()
 
 ```
 
-# Backend (API)
+# Demo importers
 
-## `fastapi_backend.py`  
-_(243 lines)_
+## `import_demos.py`  
+_(168 lines)_
 
 ```python
 #!/usr/bin/env python3
 """
-Obsidian Labs - FastAPI backend for tesla_style_dashboard_with_chat.html
-Serves live data from the same output/ folder dashboard.py reads, and shares the
-same approvals log. The chat widget calls local Ollama directly - no external API.
-Run:
+import_demos.py - pull previously-built demo websites into the dashboard.
 
-    pip install fastapi uvicorn
-    uvicorn fastapi_backend:app --port 8502 --reload
+The dashboard shows demos from output/demos/<slug>/index.html. Your past demos
+live as HTML files in your Google Drive / Obsidian (Shipper) vault / a local
+seed_demos/ folder, under a mix of names, e.g.:
+    demo_wallys-super-service.html
+    demo_wallys-super-service_v2-imagery.html
+    makeover_homestyle-desserts-bakery.html
+    salon-uccelli.html (demo code)
+    degasperi.html (flagship demo code)
+This script finds them (whatever they're named), copies each into the dashboard,
+and it picks them up immediately (no backend changes).
+
+By default it scans (shallow - top level only, so it stays fast):
+  - ./seed_demos/            (drop any demo HTML here to force-include it)
+  - GDRIVE_PATH from .env    (your Google Drive root)
+  - GDRIVE_PATH/demos
+  - OBSIDIAN_VAULT_PATH from .env   (your Shipper Vault)
+
+Usage
+-----
+    python import_demos.py                # scan the default locations
+    python import_demos.py --recursive    # also scan subfolders
+    python import_demos.py a.html "b.html (demo code)"   # import specific files
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parent
+OUTPUT_DEMOS = ROOT / "output" / "demos"
+SEED_DEMOS = ROOT / "seed_demos"
+load_dotenv(ROOT / ".env", encoding="utf-8-sig")
+
+# A file is a candidate demo if its name contains ".html" anywhere (covers
+# "salon-uccelli.html (demo code)") and it isn't one of the app's own files.
+EXCLUDE_SUBSTRINGS = (
+    "dashboard", "tesla_style_dashboard", "manifest", "sw.js",
+    "_preview", "mortgage-calculator", "index.html",
+)
+# Name hints that mark a file as one of our demos.
+DEMO_NAME_HINTS = ("demo", "makeover", "flagship")
+# Content signatures of an Obsidian Labs demo (belt-and-suspenders detection).
+WATERMARK_HINTS = ("obsidianlabshq", "built by obsidian labs", "preview built by obsidian labs")
+
+
+def slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "demo"
+
+
+def has_html(path: Path) -> bool:
+    return ".html" in path.name.lower()
+
+
+def is_excluded(path: Path) -> bool:
+    low = path.name.lower()
+    return any(x in low for x in EXCLUDE_SUBSTRINGS)
+
+
+def looks_like_demo(path: Path) -> bool:
+    if not path.is_file() or not has_html(path) or is_excluded(path):
+        return False
+    if path.parent.name == "seed_demos":
+        return True
+    low = path.name.lower()
+    if any(h in low for h in DEMO_NAME_HINTS):
+        return True
+    # Fall back to a content check for cleanly-named demos (e.g. salon-uccelli).
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:4000].lower()
+    except Exception:
+        return False
+    if any(w in head for w in WATERMARK_HINTS):
+        return True
+    # A standalone HTML document that isn't an app file - treat as a demo.
+    return "<!doctype html" in head or "<html" in head
+
+
+def demo_slug(path: Path) -> str:
+    name = path.name
+    i = name.lower().find(".html")
+    if i != -1:
+        name = name[:i]               # drop ".html" and any "(demo code)" tail
+    name = re.sub(r"^(demo|makeover)[ _-]+", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"[ _-]+v\d+([ _-]+imagery)?$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"[ _-]+(flagship|imagery|final|demo[ _-]?code)$", "", name, flags=re.IGNORECASE)
+    return slugify(name)
+
+
+def scan_dir(d: Path, recursive: bool) -> list[Path]:
+    if not d.exists():
+        return []
+    it = d.rglob("*") if recursive else d.glob("*")
+    return [p for p in it if looks_like_demo(p)]
+
+
+def default_locations() -> list[Path]:
+    locs = [SEED_DEMOS]
+    gdrive = os.getenv("GDRIVE_PATH", "").strip().strip('"').strip("'")
+    vault = os.getenv("OBSIDIAN_VAULT_PATH", "").strip().strip('"').strip("'")
+    if gdrive:
+        locs += [Path(gdrive), Path(gdrive) / "demos"]
+    if vault:
+        locs.append(Path(vault))
+    return locs
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Import past demo websites into the dashboard")
+    parser.add_argument("files", nargs="*", help="Specific demo HTML files to import")
+    parser.add_argument("--recursive", action="store_true", help="Scan subfolders too (slower)")
+    args = parser.parse_args()
+
+    OUTPUT_DEMOS.mkdir(parents=True, exist_ok=True)
+    SEED_DEMOS.mkdir(parents=True, exist_ok=True)
+
+    found: list[Path] = []
+    if args.files:
+        found = [Path(f) for f in args.files if Path(f).is_file()]
+    else:
+        for d in default_locations():
+            found += scan_dir(d, args.recursive)
+
+    # Group by slug; when several files map to the same business (e.g. plain +
+    # _v2-imagery), keep the largest file - usually the richer, later version.
+    best: dict[str, Path] = {}
+    for p in found:
+        slug = demo_slug(p)
+        cur = best.get(slug)
+        if cur is None or p.stat().st_size > cur.stat().st_size:
+            best[slug] = p
+
+    if not best:
+        print(
+            "[import_demos] No demo files found.\n"
+            "  Put demo HTML in seed_demos/, or set GDRIVE_PATH / OBSIDIAN_VAULT_PATH in .env\n"
+            "  to the folders that hold your existing demos, then re-run."
+        )
+        return
+
+    for slug, src in sorted(best.items()):
+        dest_dir = OUTPUT_DEMOS / slug
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copyfile(src, dest_dir / "index.html")
+            print(f"[import_demos] {src.name}  ->  output/demos/{slug}/index.html")
+        except Exception as e:
+            print(f"[import_demos] ! failed on {src}: {e}", file=sys.stderr)
+
+    print(
+        f"[import_demos] Done. Imported {len(best)} demo(s): {', '.join(sorted(best))}. "
+        "Refresh the dashboard to see them."
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+## `import_github_demos.py`  
+_(143 lines)_
+
+```python
+#!/usr/bin/env python3
+"""
+import_github_demos.py - pull demo websites from your GitHub repos into the dashboard.
+
+You keep demos in public GitHub repos under your account (themortgagemaster01-eng),
+e.g. `mahopac-demos` (a batch of business demos), `castro-tax-demo`, `xtrachange-demo`,
+`mrnicks-demo`, `obsidianlabs-demo`. This script clones each one and copies its demo
+HTML into output/demos/<slug>/index.html so the dashboard shows them.
+
+- A repo with an `index.html` at its root  -> one demo, slug = repo name (minus "-demo").
+- A repo that is a collection (subfolders each with an index.html, like mahopac-demos)
+  -> one demo per subfolder, slug = subfolder name.
+
+Edit the REPOS list below (or create a file `github_demo_repos.txt`, one `owner/repo`
+per line) to control what gets pulled. Public repos need no login; private ones use
+your normal git credentials.
+
+Usage
+-----
+    python import_github_demos.py
+    python import_github_demos.py owner/repo another/repo
+"""
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+OUTPUT_DEMOS = ROOT / "output" / "demos"
+REPO_LIST_FILE = ROOT / "github_demo_repos.txt"
+
+OWNER = "themortgagemaster01-eng"
+# Default demo repos (edit freely, or use github_demo_repos.txt).
+REPOS = [
+    f"{OWNER}/mahopac-demos",
+    f"{OWNER}/castro-tax-demo",
+    f"{OWNER}/xtrachange-demo",
+    f"{OWNER}/mrnicks-demo",
+    f"{OWNER}/obsidianlabs-demo",
+]
+
+EXCLUDE_SUBSTRINGS = ("dashboard", "manifest", "_preview", "mortgage-calculator")
+
+
+def slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "demo"
+
+
+def repo_slug(repo: str) -> str:
+    name = repo.split("/")[-1]
+    name = re.sub(r"[_-]+demos?$", "", name, flags=re.IGNORECASE)  # drop trailing -demo/-demos
+    return slugify(name)
+
+
+def load_repos(cli_repos: list[str]) -> list[str]:
+    if cli_repos:
+        return cli_repos
+    if REPO_LIST_FILE.exists():
+        lines = [l.strip() for l in REPO_LIST_FILE.read_text(encoding="utf-8").splitlines()]
+        repos = [l for l in lines if l and not l.startswith("#")]
+        if repos:
+            return repos
+    return REPOS
+
+
+def clone(repo: str, dest: Path) -> bool:
+    url = f"https://github.com/{repo}.git"
+    try:
+        r = subprocess.run(
+            ["git", "clone", "--depth", "1", url, str(dest)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0:
+            print(f"[gh_demos] could not clone {repo}: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'unknown error'}", file=sys.stderr)
+            return False
+        return True
+    except FileNotFoundError:
+        print("[gh_demos] git is not installed - cannot pull GitHub demos.", file=sys.stderr)
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"[gh_demos] timed out cloning {repo}", file=sys.stderr)
+        return False
+
+
+def demos_in_repo(repo_dir: Path, repo: str) -> list[tuple[str, Path]]:
+    """Return (slug, html_path) pairs found in a cloned repo."""
+    out: list[tuple[str, Path]] = []
+    root_index = repo_dir / "index.html"
+    if root_index.exists():
+        out.append((repo_slug(repo), root_index))
+    # subfolder demos (collections like mahopac-demos)
+    for idx in repo_dir.rglob("index.html"):
+        if idx == root_index:
+            continue
+        rel = idx.relative_to(repo_dir)
+        low = str(rel).lower()
+        if any(x in low for x in EXCLUDE_SUBSTRINGS):
+            continue
+        slug = slugify(idx.parent.name)
+        out.append((slug, idx))
+    # de-dupe by slug (first wins)
+    seen, uniq = set(), []
+    for slug, p in out:
+        if slug not in seen:
+            seen.add(slug)
+            uniq.append((slug, p))
+    return uniq
+
+
+def main() -> None:
+    repos = load_repos(sys.argv[1:])
+    OUTPUT_DEMOS.mkdir(parents=True, exist_ok=True)
+    imported: list[str] = []
+
+    for repo in repos:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "repo"
+            if not clone(repo, dest):
+                continue
+            found = demos_in_repo(dest, repo)
+            if not found:
+                print(f"[gh_demos] {repo}: no index.html demo found - skipping.")
+                continue
+            for slug, src in found:
+                dest_dir = OUTPUT_DEMOS / slug
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dest_dir / "index.html")
+                imported.append(slug)
+                print(f"[gh_demos] {repo}:{src.name}  ->  output/demos/{slug}/index.html")
+
+    if imported:
+        print(f"[gh_demos] Done. Imported {len(imported)} demo(s): {', '.join(sorted(set(imported)))}. Refresh the dashboard.")
+    else:
+        print("[gh_demos] No demos imported. Check the REPOS list / your network / git.")
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+# Automation & media
+
+## `autonomous_orchestrator.py`  
+_(240 lines)_
+
+```python
+#!/usr/bin/env python3
+"""
+Obsidian Labs - Autonomous Lead Generation Orchestrator (v2)
+Runs nightly: Scrape -> Grade -> Multi-Agent Demo Build
+-> Media Enhancement -> Outreach Draft
+
+Human approval required before any outreach is sent. Nothing in this file ever sends anything.
 """
 from __future__ import annotations
 
 import csv
-import datetime as dt
 import json
-import re
+import logging
+import os
 import subprocess
 import sys
+import time
+import datetime as dt
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+try:
+    import schedule
+except ImportError:
+    print("Missing dependency: pip install schedule")
+    sys.exit(1)
+
+try:
+    import requests  # only needed for Telegram; degrade gracefully if absent
+except ImportError:
+    requests = None
+
+# ---------------------------------------------------------------------------
+# Paths & config
+# ---------------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parent
+OUTPUT_DIR = ROOT / "output"
+LOGS_DIR = OUTPUT_DIR / "logs"
+SEEN_FILE = OUTPUT_DIR / "seen_leads.json"
+LEADS_GRADED_CSV = OUTPUT_DIR / "leads_graded.csv"
+
+STAGE_TIMEOUT = int(os.environ.get("OL_STAGE_TIMEOUT", "1800"))
+NIGHTLY_LIMIT = int(os.environ.get("OL_NIGHTLY_LIMIT", "5"))
+RUN_AT = os.environ.get("OL_RUN_AT", "02:00")
+TELEGRAM_TOKEN = os.environ.get("OL_TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("OL_TELEGRAM_CHAT_ID", "")
+
+# ---------------------------------------------------------------------------
+# Logging (rotating file + console)
+# ---------------------------------------------------------------------------
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+logger = logging.getLogger("obsidian_orchestrator")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    fh = RotatingFileHandler(
+        LOGS_DIR / "nightly_runs.log",
+        maxBytes=2_000_000,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    fh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(message)s"))
+    logger.addHandler(fh)
+
+    ch = logging.StreamHandler()
+    ch.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(ch)
+
+
+def log(msg: str, level: str = "info"):
+    getattr(logger, level)(msg)
+
+
+def notify(msg: str):
+    """Best-effort Telegram ping. Never raises."""
+    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID and requests):
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": f"[Obsidian Labs] {msg}"},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"Telegram notify failed: {e}", "warning")
+
+
+def load_seen() -> set:
+    if SEEN_FILE.exists():
+        try:
+            return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")))
+        except Exception as e:
+            log(f"Could not read seen file, starting fresh: {e}", "warning")
+    return set()
+
+
+def save_seen(seen: set):
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2), encoding="utf-8")
+
+
+def mark_seen(new_keys):
+    seen = load_seen()
+    before = len(seen)
+    seen.update(new_keys)
+    save_seen(seen)
+    log(f"Dedup: {len(seen) - before} new lead(s) recorded, {len(seen)} total known.")
+
+
+def load_graded_leads() -> list[dict]:
+    if LEADS_GRADED_CSV.exists():
+        with LEADS_GRADED_CSV.open(newline="", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+    json_path = OUTPUT_DIR / "graded_leads.json"
+    if json_path.exists():
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    return []
+
+
+def lead_key(lead: dict) -> str:
+    return lead.get("place_id") or f"{lead.get('name', '')}|{lead.get('town', '')}"
+
+
+class StageError(RuntimeError):
+    pass
+
+
+def run_stage(script: str, args: list | None = None) -> str:
+    cmd = [sys.executable, script] + (args or [])
+    log(f"Running: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=STAGE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise StageError(f"{script} timed out after {STAGE_TIMEOUT}s")
+
+    if result.returncode != 0:
+        raise StageError(
+            f"{script} failed (exit {result.returncode}): {result.stderr.strip()}"
+        )
+
+    if result.stdout.strip():
+        log(result.stdout.strip())
+    return result.stdout
+
+
+def nightly_autonomous_run(limit: int = NIGHTLY_LIMIT):
+    start = dt.datetime.now()
+    log(f"=== STARTING NIGHTLY RUN for {limit} businesses ===")
+    notify(f"Nightly run started ({limit} businesses).")
+    try:
+        log("Stage 1: Scraping local businesses...")
+        run_stage("pipeline.py", ["--stage", "scrape", "--limit", str(limit)])
+
+        log("Stage 2: Grading leads...")
+        run_stage("pipeline.py", ["--stage", "grade"])
+
+        graded = load_graded_leads()
+        seen = load_seen()
+        fresh_leads = []
+        for lead in graded:
+            key = lead_key(lead)
+            if key and key not in seen:
+                fresh_leads.append((key, lead))
+
+        if not graded:
+            log(
+                "No graded leads found (output/leads_graded.csv missing/empty).",
+                "warning",
+            )
+
+        log(f"Dedup gate: {len(fresh_leads)} of {len(graded)} graded leads are new.")
+
+        if graded and not fresh_leads:
+            log("No new leads tonight - skipping demo/media/outreach stages.")
+            notify("Nightly run finished: no new leads to process.")
+            return
+
+        log("Stage 3: Generating demos (demo_gen_local.py)...")
+        run_stage("demo_gen_local.py", ["--limit", str(limit)])
+
+        media_script = ROOT / "media_enhancer.py"
+        if media_script.exists():
+            log("Stage 4: Media enhancement...")
+            run_stage("media_enhancer.py", ["--limit", str(limit)])
+        else:
+            log("Stage 4: media_enhancer.py not found - skipping.", "warning")
+
+        outreach_script = ROOT / "outreach_generator.py"
+        if outreach_script.exists():
+            log("Stage 5: Outreach drafts ($1,495 pitch)...")
+            run_stage("outreach_generator.py", ["--limit", str(limit)])
+        else:
+            log("Stage 5: outreach_generator.py not found - skipping.", "warning")
+
+        if fresh_leads:
+            mark_seen(k for k, _ in fresh_leads)
+
+        elapsed = (dt.datetime.now() - start).total_seconds()
+        log(f"=== NIGHTLY RUN COMPLETE ({elapsed:.0f}s) ===")
+        log(
+            "Check dashboard for results. Human approval required before sending any outreach."
+        )
+        notify(
+            f"Nightly run complete in {elapsed:.0f}s. "
+            f"{len(fresh_leads)} new lead(s). Awaiting approval."
+        )
+
+    except StageError as e:
+        log(f"RUN ABORTED: {e}", "error")
+        notify(f"RUN ABORTED: {e}")
+    except Exception as e:
+        log(f"UNEXPECTED ERROR: {e}", "error")
+        notify(f"UNEXPECTED ERROR: {e}")
+
+
+schedule.every().day.at(RUN_AT).do(nightly_autonomous_run, limit=NIGHTLY_LIMIT)
+
+
+if __name__ == "__main__":
+    if "--now" in sys.argv:
+        nightly_autonomous_run(NIGHTLY_LIMIT)
+        sys.exit(0)
+
+    print("Obsidian Labs Autonomous Orchestrator (v2) started.")
+    print(f"Scheduled nightly at {RUN_AT} for {NIGHTLY_LIMIT} businesses.")
+    print("Run once now: python autonomous_orchestrator.py --now")
+    print("Press Ctrl+C to stop.")
+    while True:
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            log(f"SCHEDULER LOOP ERROR: {e}", "error")
+        time.sleep(60)
+
+```
+
+## `media_enhancer.py`  
+_(187 lines)_
+
+```python
+#!/usr/bin/env python3
+"""
+Obsidian Labs - Media Enhancement Module
+Enhances real scraped photos (Pillow, $0 cost, fully local). Optional Unsplash stock
+photo fallback if UNSPLASH_ACCESS_KEY is set. Stock video/music NOT implemented (would
+need a paid API) - flagged as a TODO, not a silent no-op.
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+from PIL import Image, ImageEnhance
 
 try:
     import requests
@@ -1824,23 +3338,209 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "output"
 DEMOS_DIR = OUTPUT_DIR / "demos"
-OUTREACH_DIR = OUTPUT_DIR / "outreach"
-LOGS_DIR = OUTPUT_DIR / "logs"
-LEADS_GRADED_CSV = OUTPUT_DIR / "leads_graded.csv"
-APPROVALS_LOG = LOGS_DIR / "approvals.csv"
-PIPELINE_RUN_LOG = LOGS_DIR / "pipeline_run.log"
+ENV_PATH = ROOT / ".env"
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5:14b-instruct-q4_K_M"
+load_dotenv(ENV_PATH, encoding="utf-8-sig")
+UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY", "")
 
-app = FastAPI(title="Obsidian Labs API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+NICHE_MOOD = {
+    "dentist": ("modern dental clinic interior", "clean, professional, trustworthy"),
+    "roofer": ("roofing contractor working on house", "rugged, dependable, craftsmanship"),
+    "restaurant": ("warm restaurant interior dining", "warm, inviting, appetizing"),
+    "bakery": ("artisan bakery fresh bread pastries", "warm, cozy, handmade"),
+    "landscaping": ("landscaped garden lawn care", "fresh, natural, well-maintained"),
+    "auto shop": ("modern auto repair garage", "precise, technical, dependable"),
+    "salon": ("modern hair salon interior", "stylish, clean, upscale"),
+    "gym": ("modern fitness gym interior", "energetic, motivating, clean"),
+    "plumb": ("professional plumber fixing pipes under sink", "reliable, clean, professional"),
+    "electric": ("licensed electrician working on panel", "safe, precise, dependable"),
+    "hvac": ("hvac technician servicing outdoor unit", "reliable, technical, comfortable"),
+    "cleaning": ("spotless clean modern home interior", "fresh, spotless, trustworthy"),
+}
+DEFAULT_MOOD = (
+    "professional local business storefront",
+    "clean, professional, trustworthy",
 )
+
+
+def pick_stock_query(niche: str) -> tuple[str, str]:
+    niche_key = (niche or "").strip().lower()
+    for key, val in NICHE_MOOD.items():
+        if key in niche_key:
+            return val
+    return DEFAULT_MOOD
+
+
+def enhance_existing_image(image_path: Path, output_path: Path) -> Path:
+    img = Image.open(image_path).convert("RGB")
+    img = ImageEnhance.Contrast(img).enhance(1.12)
+    img = ImageEnhance.Sharpness(img).enhance(1.15)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path, quality=92)
+    return output_path
+
+
+def fetch_stock_image(query: str, dest: Path) -> Path | None:
+    if not UNSPLASH_ACCESS_KEY:
+        print(
+            "[media_enhancer] No UNSPLASH_ACCESS_KEY set in .env - skipping stock "
+            "image fallback (get a free key at unsplash.com/developers if you want this).",
+            file=sys.stderr,
+        )
+        return None
+    if requests is None:
+        print(
+            "[media_enhancer] `requests` not installed - skipping stock fallback.",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        resp = requests.get(
+            "https://api.unsplash.com/photos/random",
+            params={"query": query, "orientation": "landscape"},
+            headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        image_url = data.get("urls", {}).get("regular")
+        if not image_url:
+            return None
+        img_resp = requests.get(image_url, timeout=20)
+        img_resp.raise_for_status()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+        img.save(dest, quality=92)
+        return dest
+    except Exception as e:
+        print(f"[media_enhancer] Unsplash fetch failed: {e}", file=sys.stderr)
+        return None
+
+
+def process_lead_media(slug: str, niche: str = "") -> dict:
+    lead_dir = DEMOS_DIR / slug
+    photos_dir = lead_dir / "photos"
+    enhanced_dir = lead_dir / "media" / "enhanced"
+
+    result = {"slug": slug, "enhanced": [], "stock_fallback": None}
+
+    real_photos = []
+    if photos_dir.exists():
+        real_photos = [
+            p
+            for p in photos_dir.iterdir()
+            if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
+        ]
+
+    if real_photos:
+        for photo in real_photos:
+            out_path = enhanced_dir / photo.name
+            try:
+                enhance_existing_image(photo, out_path)
+                result["enhanced"].append(str(out_path))
+            except Exception as e:
+                print(
+                    f"[media_enhancer] Failed to enhance {photo}: {e}",
+                    file=sys.stderr,
+                )
+    else:
+        query, mood = pick_stock_query(niche)
+        stock_dest = enhanced_dir / "stock_fallback.jpg"
+        fetched = fetch_stock_image(query, stock_dest)
+        if fetched:
+            result["stock_fallback"] = str(fetched)
+            print(
+                f"[media_enhancer] {slug}: no real photos found, "
+                f"used stock fallback ({mood})."
+            )
+        else:
+            print(
+                f"[media_enhancer] {slug}: no real photos and no stock fallback available."
+            )
+
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Obsidian Labs media enhancement")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Max number of demo folders to process",
+    )
+    parser.add_argument(
+        "--lead-slug",
+        type=str,
+        default=None,
+        help="Process a single lead by slug",
+    )
+    args = parser.parse_args()
+
+    if not DEMOS_DIR.exists():
+        print(f"[media_enhancer] No demos directory at {DEMOS_DIR} - nothing to do.")
+        return
+
+    if args.lead_slug:
+        targets = [args.lead_slug]
+    else:
+        targets = sorted(p.name for p in DEMOS_DIR.iterdir() if p.is_dir())[: args.limit]
+
+    if not targets:
+        print("[media_enhancer] No demo folders found.")
+        return
+
+    for slug in targets:
+        process_lead_media(slug)
+
+    print(f"[media_enhancer] Processed {len(targets)} lead(s).")
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+## `outreach_generator.py`  
+_(219 lines)_
+
+```python
+#!/usr/bin/env python3
+"""
+Obsidian Labs - Outreach Email Draft Generator ($1,495 Starter pitch)
+Generates personalized outreach drafts using local Ollama, grounded in
+templates/email_system_prompt.md and the RAG index. Writes to
+output/outreach/<slug>.md - never sends anything.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import re
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parent
+OUTPUT_DIR = ROOT / "output"
+OUTREACH_DIR = OUTPUT_DIR / "outreach"
+LEADS_GRADED_CSV = OUTPUT_DIR / "leads_graded.csv"
+TEMPLATES_DIR = ROOT / "templates"
+EMAIL_SYSTEM_PROMPT_PATH = TEMPLATES_DIR / "email_system_prompt.md"
+ENV_PATH = ROOT / ".env"
+CHROMA_DIR = ROOT / "chroma_db"
+
+load_dotenv(ENV_PATH, encoding="utf-8-sig")
+OLLAMA_MODEL = "qwen2.5:14b-instruct-q4_K_M"
+EMBED_MODEL = "nomic-embed-text"
+
+FALLBACK_SYSTEM_PROMPT = """You are writing cold outreach email drafts for Obsidian Labs, \
+a web design agency. Tone: low-pressure, specific to the recipient's real business, never \
+pushy, never claims to be AI-built. Pricing: Starter $1,495 / Professional $2,500 (most \
+popular) / Business Growth $4,500+. Lead with a specific, real observation about their \
+current site or online presence, not generic flattery. Keep it short - 4-6 sentences. \
+End with a soft, easy next step (not a hard CTA)."""
 
 
 def slugify(name: str) -> str:
@@ -1848,870 +3548,185 @@ def slugify(name: str) -> str:
     return slug or "lead"
 
 
-def read_leads() -> list[dict]:
+def load_system_prompt() -> str:
+    if EMAIL_SYSTEM_PROMPT_PATH.exists():
+        return EMAIL_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    print(
+        f"[outreach_generator] No {EMAIL_SYSTEM_PROMPT_PATH} found - using a baked-in "
+        "fallback voice/pricing prompt instead.",
+        file=sys.stderr,
+    )
+    return FALLBACK_SYSTEM_PROMPT
+
+
+def load_hot_leads(limit: int) -> list[dict]:
     if not LEADS_GRADED_CSV.exists():
+        print(
+            f"[outreach_generator] No {LEADS_GRADED_CSV} found - nothing to draft.",
+            file=sys.stderr,
+        )
         return []
     with LEADS_GRADED_CSV.open(newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f))
+    hot = [
+        r
+        for r in rows
+        if str(r.get("is_hot_lead", "")).strip().lower() in ("true", "1", "yes")
+    ]
+    return (hot or rows)[:limit]
 
 
-def list_demo_slugs() -> list[str]:
-    if not DEMOS_DIR.exists():
-        return []
-    return sorted(
-        p.name
-        for p in DEMOS_DIR.iterdir()
-        if p.is_dir() and (p / "index.html").exists()
+def get_retriever():
+    if not CHROMA_DIR.exists():
+        return None
+    try:
+        from langchain_chroma import Chroma
+        from langchain_ollama import OllamaEmbeddings
+
+        embeddings = OllamaEmbeddings(model=EMBED_MODEL)
+        return Chroma(
+            persist_directory=str(CHROMA_DIR),
+            embedding_function=embeddings,
+        )
+    except Exception as e:
+        print(
+            f"[outreach_generator] RAG retriever unavailable ({e}) - continuing without it.",
+            file=sys.stderr,
+        )
+        return None
+
+
+def retrieve_context(vectorstore, query: str, k: int = 3) -> str:
+    if vectorstore is None:
+        return ""
+    try:
+        docs = vectorstore.similarity_search(query, k=k)
+        return "\n\n".join(d.page_content for d in docs)
+    except Exception as e:
+        print(f"[outreach_generator] RAG retrieval failed: {e}", file=sys.stderr)
+        return ""
+
+
+def build_prompt(lead: dict, system_prompt: str, retrieved_context: str) -> str:
+    name = lead.get("name", "this business")
+    town = lead.get("town", "")
+    niche = lead.get("type", "local business")
+    status = lead.get("status", "")
+    perf = lead.get("perf_score", "")
+
+    site_note = (
+        "no live website"
+        if status == "no_website"
+        else f"a website scoring {perf}/100 on performance"
     )
 
-
-def list_outreach_slugs() -> list[str]:
-    if not OUTREACH_DIR.exists():
-        return []
-    return sorted(p.stem for p in OUTREACH_DIR.glob("*.md"))
-
-
-@app.get("/api/status")
-def status():
-    leads = read_leads()
-    hot = sum(
-        1
-        for l in leads
-        if str(l.get("is_hot_lead", "")).lower() in ("true", "1", "yes")
-    )
-    return {
-        "leads": len(leads),
-        "hot_leads": hot,
-        "demos": len(list_demo_slugs()),
-        "outreach_drafts": len(list_outreach_slugs()),
-        "pricing": {
-            "starter": 1495,
-            "professional": 2500,
-            "business_growth": "4500+",
-        },
-        "guardrails": "Runs 100% locally. Nothing auto-sends.",
-    }
-
-
-@app.get("/api/leads")
-def get_leads():
-    return read_leads()
-
-
-@app.get("/api/demos")
-def get_demos():
-    return [{"slug": s} for s in list_demo_slugs()]
-
-
-@app.get("/api/demos/{slug}")
-def get_demo_html(slug: str):
-    demo_file = DEMOS_DIR / slug / "index.html"
-    if not demo_file.exists():
-        raise HTTPException(status_code=404, detail=f"No demo found for '{slug}'")
-    return {"slug": slug, "html": demo_file.read_text(encoding="utf-8")}
-
-
-@app.get("/api/outreach")
-def get_outreach():
-    return [{"slug": s} for s in list_outreach_slugs()]
-
-
-@app.get("/api/outreach/{slug}")
-def get_outreach_draft(slug: str):
-    draft_file = OUTREACH_DIR / f"{slug}.md"
-    if not draft_file.exists():
-        raise HTTPException(
-            status_code=404, detail=f"No outreach draft found for '{slug}'"
-        )
-    return {"slug": slug, "content": draft_file.read_text(encoding="utf-8")}
-
-
-class ApprovalRequest(BaseModel):
-    kind: str
-    identifier: str
-
-
-@app.post("/api/approve")
-def approve(req: ApprovalRequest):
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    is_new = not APPROVALS_LOG.exists()
-    with APPROVALS_LOG.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if is_new:
-            writer.writerow(["timestamp", "kind", "identifier"])
-        writer.writerow(
-            [
-                dt.datetime.now().isoformat(timespec="seconds"),
-                req.kind,
-                req.identifier,
-            ]
-        )
-    return {"status": "logged", "kind": req.kind, "identifier": req.identifier}
-
-
-class RunPipelineRequest(BaseModel):
-    stage: str = "all"
-    towns: list[str] = ["Mahopac", "Carmel"]
-    niches: list[str] = ["dentist", "roofer"]
-    limit: int = 5
-
-
-@app.post("/api/run-pipeline")
-def run_pipeline(req: RunPipelineRequest):
-    cmd = [sys.executable, "pipeline.py", "--stage", req.stage]
-    if req.stage in ("all", "scrape"):
-        cmd += [
-            "--towns",
-            *req.towns,
-            "--niches",
-            *req.niches,
-            "--limit",
-            str(req.limit),
-        ]
-
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    with PIPELINE_RUN_LOG.open("a", encoding="utf-8") as log_f:
-        log_f.write(
-            f"\n\n=== {dt.datetime.now().isoformat(timespec='seconds')} "
-            f"- {' '.join(cmd)} ===\n"
-        )
-        subprocess.Popen(
-            cmd, cwd=str(ROOT), stdout=log_f, stderr=subprocess.STDOUT
-        )
-
-    return {"status": "started", "command": " ".join(cmd)}
-
-
-class ChatRequest(BaseModel):
-    message: str
-
-
-@app.post("/api/chat")
-def chat(req: ChatRequest):
-    if requests is None:
-        raise HTTPException(
-            status_code=500, detail="`requests` not installed on the backend."
-        )
-
-    live_status = status()
-    system_context = (
-        "You are the Obsidian Labs assistant embedded in the pipeline dashboard. "
-        "You help the site owner understand their local lead-gen pipeline. Be concise, "
-        "concrete, and never claim to have sent anything - this system never auto-sends. "
-        f"Live stats right now: {json.dumps(live_status)}. "
-        "Pricing: Starter $1,495 / Professional $2,500 (most popular) / Business Growth $4,500+."
+    context_block = (
+        "\n\nBackground context from past work (for tone/voice only, do not invent "
+        f"facts about this specific business):\n{retrieved_context}"
+        if retrieved_context
+        else ""
     )
 
-    prompt = f"{system_context}\n\nUser question: {req.message}\n\nAnswer:"
+    return f"""{system_prompt}
+
+Write ONE outreach email draft for:
+Business name: {name}
+Niche: {niche}
+Town: {town}
+Current site status: {site_note}
+Subject line style example: "Quick question about your {niche} website in {town}"
+
+{context_block}
+Output format:
+Subject: <subject line>
+<email body>
+"""
+
+
+def generate_draft(lead: dict, llm, vectorstore, system_prompt: str) -> str:
+    query = f"{lead.get('type', '')} outreach tone pricing"
+    context = retrieve_context(vectorstore, query)
+    prompt = build_prompt(lead, system_prompt, context)
+    return llm.invoke(prompt)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Obsidian Labs outreach draft generator")
+    parser.add_argument(
+        "--limit", type=int, default=5, help="Max number of leads to draft for"
+    )
+    parser.add_argument(
+        "--lead-slug",
+        type=str,
+        default=None,
+        help="Draft for a single lead by slug",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate even if a draft already exists",
+    )
+    args = parser.parse_args()
 
     try:
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=60,
+        from langchain_ollama import OllamaLLM
+    except ImportError:
+        print(
+            "[outreach_generator] Missing dependency: pip install langchain-ollama",
+            file=sys.stderr,
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return {"reply": data.get("response", "").strip()}
-    except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Could not reach local Ollama at {OLLAMA_URL} - "
-                f"is `ollama serve` running? ({e})"
-            ),
-        )
+        sys.exit(1)
+
+    OUTREACH_DIR.mkdir(parents=True, exist_ok=True)
+    system_prompt = load_system_prompt()
+    vectorstore = get_retriever()
+    llm = OllamaLLM(model=OLLAMA_MODEL)
+
+    leads = load_hot_leads(limit=1000)
+    if args.lead_slug:
+        leads = [l for l in leads if slugify(l.get("name", "")) == args.lead_slug]
+        if not leads:
+            print(
+                f"[outreach_generator] No lead found matching slug '{args.lead_slug}'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    else:
+        leads = leads[: args.limit]
+
+    if not leads:
+        print("[outreach_generator] No leads to draft for.")
+        return
+
+    written = 0
+    for lead in leads:
+        slug = slugify(lead.get("name", ""))
+        out_path = OUTREACH_DIR / f"{slug}.md"
+        if out_path.exists() and not args.force:
+            print(
+                f"[outreach_generator] Skipping {slug} - draft already exists "
+                "(use --force to regenerate)."
+            )
+            continue
+        print(f"[outreach_generator] Drafting outreach for {lead.get('name')}...")
+        try:
+            draft = generate_draft(lead, llm, vectorstore, system_prompt)
+        except Exception as e:
+            print(f"[outreach_generator] FAILED for {slug}: {e}", file=sys.stderr)
+            continue
+        out_path.write_text(draft.strip() + "\n", encoding="utf-8")
+        written += 1
+        print(f"[outreach_generator] Wrote {out_path}")
+
+    print(f"[outreach_generator] Done. {written} draft(s) written to {OUTREACH_DIR}.")
 
 
-@app.get("/")
-def root():
-    return {
-        "service": "Obsidian Labs API",
-        "docs": "/docs",
-        "note": (
-            "Serves tesla_style_dashboard_with_chat.html. "
-            "Streamlit dashboard.py still works independently."
-        ),
-    }
+if __name__ == "__main__":
+    main()
 
 ```
 
-# Dashboards (live, browser/PWA)
-
-## `dashboard_leadflow.html`  
-_(669 lines)_
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Obsidian Labs — Dashboard</title>
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="icon-192.png" />
-  <link rel="apple-touch-icon" href="icon-192.png" />
-  <meta name="theme-color" content="#f6f7f9" />
-  <style>
-    /* ============================================================
-       Obsidian Labs — LeadFlow-style light dashboard.
-       Single self-contained file. Same fastapi_backend on :8502,
-       no backend changes. Charts are hand-drawn inline SVG (CSP-safe).
-       ============================================================ */
-    :root {
-      --purple: #7c3aed;
-      --purple-600: #6d28d9;
-      --purple-50: #f3effe;
-      --purple-100: #ede9fe;
-      --blue: #3b82f6;
-      --teal: #14b8a6;
-      --orange: #f59e0b;
-      --bg: #f6f7f9;
-      --card: #ffffff;
-      --border: #eceef2;
-      --border-2: #e5e7eb;
-      --text: #111827;
-      --muted: #6b7280;
-      --faint: #9ca3af;
-      --good-bg: #dcfce7; --good-fg: #15803d;
-      --new-bg: #dbeafe;  --new-fg: #1d4ed8;
-      --warn-bg: #fef3c7; --warn-fg: #b45309;
-      --bad-bg: #fee2e2;  --bad-fg: #b91c1c;
-      --gray-bg: #f1f5f9; --gray-fg: #475569;
-      --radius: 16px;
-    }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0; background: var(--bg); color: var(--text);
-      font-family: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      -webkit-font-smoothing: antialiased; letter-spacing: -0.011em;
-    }
-    .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
-
-    /* ---------- sidebar ---------- */
-    .sidebar { background: var(--card); border-right: 1px solid var(--border); padding: 1.25rem 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; position: sticky; top: 0; height: 100vh; }
-    .logo { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; padding: 0.2rem 0.6rem 1rem; }
-    .logo .mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(150deg, var(--purple), #4f46e5); display: grid; place-items: center; color: #fff; font-size: 1.05rem; box-shadow: 0 6px 16px rgba(124,58,237,.35); }
-    .nav { display: flex; flex-direction: column; gap: 0.15rem; }
-    .nav button { display: flex; align-items: center; gap: 0.75rem; width: 100%; text-align: left; background: none; border: none; padding: 0.62rem 0.8rem; border-radius: 11px; font-size: 0.92rem; font-weight: 550; color: var(--muted); cursor: pointer; font-family: inherit; transition: all .15s; }
-    .nav button:hover { background: var(--bg); color: var(--text); }
-    .nav button.active { background: var(--purple-100); color: var(--purple-600); font-weight: 650; }
-    .nav .ico { width: 20px; height: 20px; flex: none; opacity: .9; }
-    .side-spacer { flex: 1; }
-    .promo { background: var(--purple-50); border: 1px solid var(--purple-100); border-radius: var(--radius); padding: 1.1rem; text-align: center; margin: 0.5rem 0.3rem; }
-    .promo .rocket { font-size: 1.5rem; }
-    .promo h4 { margin: 0.5rem 0 0.3rem; font-size: 1.02rem; }
-    .promo p { margin: 0 0 0.85rem; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
-    .profile { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 0.6rem 0.2rem; border-top: 1px solid var(--border); margin-top: 0.3rem; }
-    .avatar { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 650; font-size: 0.85rem; flex: none; }
-    .profile .who { font-size: 0.86rem; font-weight: 600; line-height: 1.2; }
-    .profile .who small { display: block; color: var(--faint); font-weight: 400; font-size: 0.76rem; }
-
-    /* ---------- main ---------- */
-    .main { padding: 1.6rem 2rem 3rem; min-width: 0; }
-    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
-    .topbar h1 { margin: 0 0 0.25rem; font-size: 1.7rem; letter-spacing: -0.03em; }
-    .topbar .sub { margin: 0; color: var(--muted); font-size: 0.92rem; max-width: 40ch; }
-    .top-actions { display: flex; align-items: center; gap: 0.6rem; }
-    .chip { display: inline-flex; align-items: center; gap: 0.5rem; background: var(--card); border: 1px solid var(--border-2); border-radius: 11px; padding: 0.55rem 0.85rem; font-size: 0.85rem; font-weight: 550; cursor: pointer; }
-    .icon-btn { width: 42px; height: 42px; border-radius: 11px; background: var(--card); border: 1px solid var(--border-2); cursor: pointer; font-size: 1rem; position: relative; }
-    .icon-btn .badge { position: absolute; top: 9px; right: 10px; width: 7px; height: 7px; background: var(--purple); border-radius: 50%; }
-
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 1px 2px rgba(16,24,40,.04); }
-
-    /* KPI row */
-    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; margin-bottom: 1.3rem; }
-    .kpi { padding: 1.15rem 1.2rem; }
-    .kpi .kico { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; font-size: 1.1rem; margin-bottom: 0.85rem; }
-    .kico.p { background: var(--purple-100); color: var(--purple-600); }
-    .kico.b { background: #dbeafe; color: var(--blue); }
-    .kico.t { background: #ccfbf1; color: #0f766e; }
-    .kico.o { background: #fef3c7; color: #b45309; }
-    .kpi .klabel { font-size: 0.85rem; color: var(--muted); }
-    .kpi .kvalue { font-size: 1.85rem; font-weight: 750; letter-spacing: -0.03em; margin: 0.1rem 0 0.35rem; font-variant-numeric: tabular-nums; }
-    .kpi .kdelta { font-size: 0.8rem; font-weight: 600; display: inline-flex; gap: 0.3rem; align-items: center; }
-    .kdelta.up { color: #15803d; } .kdelta.down { color: #b91c1c; } .kdelta.flat { color: var(--faint); }
-    .kpi .kspark { margin-top: 0.7rem; height: 34px; }
-    .kpi .kspark svg { width: 100%; height: 100%; display: block; }
-
-    /* charts row */
-    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.3rem; margin-bottom: 1.3rem; }
-    .panel { padding: 1.3rem 1.4rem; }
-    .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
-    .panel-head h3 { margin: 0; font-size: 1.12rem; letter-spacing: -0.02em; }
-    select.range { border: 1px solid var(--border-2); border-radius: 9px; padding: 0.4rem 0.6rem; font-size: 0.82rem; font-family: inherit; background: var(--card); color: var(--text); cursor: pointer; }
-    .area-wrap svg { width: 100%; height: auto; display: block; }
-    .donut-wrap { display: flex; gap: 1.4rem; align-items: center; flex-wrap: wrap; }
-    .donut-wrap svg { flex: none; }
-    .legend { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 0.55rem; }
-    .legend-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.6rem; font-size: 0.9rem; }
-    .legend-row .lname { display: flex; align-items: center; gap: 0.55rem; color: var(--text); }
-    .legend-row .swatch { width: 10px; height: 10px; border-radius: 50%; }
-    .legend-row .lpct { color: var(--muted); font-variant-numeric: tabular-nums; }
-    .legend-row .lval { display: inline-flex; align-items: center; gap: 0.4rem; font-variant-numeric: tabular-nums; font-weight: 600; }
-    .legend-row .lval .swatch { width: 8px; height: 8px; }
-
-    /* recent leads table */
-    .table-card { padding: 1.3rem 0; }
-    .table-head { display: flex; align-items: center; justify-content: space-between; padding: 0 1.4rem 0.9rem; }
-    .table-head h3 { margin: 0; font-size: 1.12rem; }
-    .link { color: var(--purple); font-weight: 600; font-size: 0.9rem; text-decoration: none; cursor: pointer; background: none; border: none; font-family: inherit; }
-    .tscroll { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 620px; }
-    thead th { text-align: left; padding: 0.7rem 1rem; color: var(--muted); font-weight: 600; font-size: 0.82rem; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: #fafbfc; }
-    thead th:first-child { padding-left: 1.4rem; }
-    tbody td { padding: 0.85rem 1rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    tbody td:first-child { padding-left: 1.4rem; color: var(--faint); font-variant-numeric: tabular-nums; }
-    tbody tr { cursor: pointer; }
-    tbody tr:hover { background: #fafafe; }
-    .cell-name { display: flex; align-items: center; gap: 0.7rem; }
-    .cell-name .avatar { width: 34px; height: 34px; font-size: 0.78rem; }
-    .cell-name .nm { font-weight: 600; }
-    .pill { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.78rem; font-weight: 600; }
-    .pill-good { background: var(--good-bg); color: var(--good-fg); }
-    .pill-new  { background: var(--new-bg);  color: var(--new-fg); }
-    .pill-warn { background: var(--warn-bg); color: var(--warn-fg); }
-    .pill-bad  { background: var(--bad-bg);  color: var(--bad-fg); }
-    .pill-gray { background: var(--gray-bg); color: var(--gray-fg); }
-    .kebab { background: none; border: none; color: var(--faint); cursor: pointer; font-size: 1.1rem; padding: 0 0.4rem; }
-    .val { font-weight: 650; font-variant-numeric: tabular-nums; }
-
-    /* bottom banner */
-    .banner { margin-top: 1.3rem; background: linear-gradient(100deg, var(--purple-100), #e0e7ff); border-radius: var(--radius); padding: 1.4rem 1.6rem; display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap; }
-    .banner .bico { width: 54px; height: 54px; border-radius: 14px; background: #fff; display: grid; place-items: center; font-size: 1.5rem; flex: none; box-shadow: 0 4px 12px rgba(124,58,237,.18); }
-    .banner .btxt { flex: 1; min-width: 220px; }
-    .banner h4 { margin: 0 0 0.25rem; font-size: 1.1rem; }
-    .banner p { margin: 0; color: #4b5563; font-size: 0.9rem; }
-
-    .btn { border: none; border-radius: 11px; padding: 0.7rem 1.3rem; font-weight: 650; font-size: 0.9rem; cursor: pointer; font-family: inherit; background: var(--purple); color: #fff; box-shadow: 0 6px 16px rgba(124,58,237,.3); transition: all .15s; }
-    .btn:hover { background: var(--purple-600); transform: translateY(-1px); }
-    .btn.block { width: 100%; }
-    .btn.small { padding: 0.45rem 0.9rem; font-size: 0.82rem; }
-    .btn.secondary { background: #fff; color: var(--purple-600); border: 1px solid var(--purple-100); box-shadow: none; }
-    .run-status { color: var(--muted); font-size: 0.85rem; margin: 0.8rem 0 0; }
-    .muted { color: var(--muted); font-size: 0.9rem; }
-    .empty { color: var(--faint); font-size: 0.9rem; padding: 1rem 1.4rem; }
-    .subpage { display: none; }
-    .subpage .panel { margin-bottom: 1.3rem; }
-
-    /* demo modal */
-    #modal { position: fixed; inset: 0; background: rgba(17,24,39,.5); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; z-index: 70; padding: 1rem; }
-    #modal.open { display: flex; }
-    .modal-card { background: var(--card); border-radius: var(--radius); width: min(880px, 96vw); max-height: 92vh; overflow: hidden; display: flex; flex-direction: column; }
-    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.3rem; border-bottom: 1px solid var(--border); }
-    .modal-head h3 { margin: 0; font-size: 1.05rem; }
-    .modal-body { padding: 1.1rem 1.3rem; overflow: auto; }
-    .device-toggle { display: flex; gap: 0.4rem; margin-bottom: 0.85rem; }
-    .device-toggle button { padding: 0.34rem 0.85rem; border-radius: 9999px; border: 1px solid var(--border-2); background: #fff; color: var(--muted); cursor: pointer; font-size: 0.78rem; }
-    .device-toggle button.active { background: var(--purple); color: #fff; border-color: var(--purple); }
-    .preview-frame-wrap { display: flex; justify-content: center; }
-    iframe#demo-preview { border: 1px solid var(--border); border-radius: 12px; width: 100%; height: 520px; background: #fff; }
-
-    /* chat */
-    #chat-toggle { position: fixed; bottom: 22px; right: 22px; width: 54px; height: 54px; border-radius: 50%; background: var(--purple); color: #fff; border: none; font-size: 1.3rem; cursor: pointer; box-shadow: 0 8px 24px rgba(124,58,237,.4); z-index: 60; }
-    #chat-panel { position: fixed; bottom: 86px; right: 22px; width: 340px; max-height: 480px; background: var(--card); border: 1px solid var(--border-2); border-radius: var(--radius); z-index: 60; display: none; flex-direction: column; overflow: hidden; box-shadow: 0 18px 50px rgba(16,24,40,.25); }
-    #chat-panel.open { display: flex; }
-    #chat-header { padding: 0.8rem 1rem; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid var(--border); background: var(--purple); color: #fff; }
-    #chat-messages { flex: 1; overflow-y: auto; padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.85rem; }
-    .chat-msg { padding: 0.5rem 0.75rem; border-radius: 13px; max-width: 86%; line-height: 1.45; }
-    .chat-msg.user { align-self: flex-end; background: var(--purple); color: #fff; }
-    .chat-msg.bot { align-self: flex-start; background: #f1f0f7; color: var(--text); }
-    #chat-input-row { display: flex; border-top: 1px solid var(--border); }
-    #chat-input { flex: 1; border: none; background: transparent; color: var(--text); padding: 0.8rem; font-size: 0.85rem; font-family: inherit; }
-    #chat-send { border: none; background: var(--purple); color: #fff; padding: 0 1.1rem; cursor: pointer; font-family: inherit; }
-
-    :focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
-
-    /* ---------- responsive ---------- */
-    @media (max-width: 1050px) { .kpis { grid-template-columns: repeat(2, 1fr); } .charts { grid-template-columns: 1fr; } }
-    @media (max-width: 820px) {
-      .app { grid-template-columns: 1fr; }
-      .sidebar { position: static; height: auto; flex-direction: row; align-items: center; gap: 0.5rem; overflow-x: auto; padding: 0.7rem 0.9rem; }
-      .logo { padding: 0 0.5rem; font-size: 1rem; }
-      .nav { flex-direction: row; gap: 0.2rem; }
-      .nav button { padding: 0.45rem 0.7rem; white-space: nowrap; }
-      .nav .ico { display: none; }
-      .side-spacer, .promo, .profile { display: none; }
-      .main { padding: 1.2rem 1rem 3rem; }
-    }
-    @media (max-width: 520px) { .kpis { grid-template-columns: 1fr 1fr; gap: 0.8rem; } .topbar h1 { font-size: 1.4rem; } }
-  </style>
-</head>
-<body>
-  <div class="app">
-    <!-- ==================== SIDEBAR ==================== -->
-    <aside class="sidebar">
-      <div class="logo"><span class="mark">◆</span> Obsidian Labs</div>
-      <nav class="nav" id="nav">
-        <button data-page="dashboard" class="active"><span class="ico">▦</span> Dashboard</button>
-        <button data-page="leads"><span class="ico">☰</span> Leads</button>
-        <button data-page="demos"><span class="ico">▤</span> Demos</button>
-        <button data-page="outreach"><span class="ico">✉</span> Outreach</button>
-        <button data-page="dashboard"><span class="ico">◔</span> Analytics</button>
-        <button id="nav-settings"><span class="ico">⚙</span> Settings</button>
-      </nav>
-      <div class="side-spacer"></div>
-      <div class="promo">
-        <div class="rocket">🚀</div>
-        <h4>Grow your pipeline</h4>
-        <p>Gather new local businesses and build demos automatically — 100% local.</p>
-        <button class="btn block" id="promo-run">Run Pipeline</button>
-      </div>
-      <div class="profile">
-        <div class="avatar" style="background:#7c3aed;">RC</div>
-        <div class="who">Robert Castro<small>themortgagemaster01@gmail.com</small></div>
-      </div>
-    </aside>
-
-    <!-- ==================== MAIN ==================== -->
-    <main class="main">
-      <div class="topbar">
-        <div>
-          <h1>Dashboard</h1>
-          <p class="sub">Welcome back, Robert! Here's what's happening with your leads.</p>
-        </div>
-        <div class="top-actions">
-          <button class="chip" id="range-chip">📅 <span id="range-label">This month</span></button>
-          <button class="icon-btn" id="settings-btn" title="Settings / backend URL">🔔<span class="badge"></span></button>
-        </div>
-      </div>
-
-      <!-- ===== DASHBOARD PAGE ===== -->
-      <section id="page-dashboard">
-        <!-- KPI cards -->
-        <div class="kpis">
-          <div class="card kpi">
-            <div class="kico p">👥</div>
-            <div class="klabel">Total Leads</div>
-            <div class="kvalue" id="k-leads">–</div>
-            <div class="kdelta flat" id="d-leads">—</div>
-            <div class="kspark" id="s-leads"></div>
-          </div>
-          <div class="card kpi">
-            <div class="kico b">🎯</div>
-            <div class="klabel">Hot Leads</div>
-            <div class="kvalue" id="k-hot">–</div>
-            <div class="kdelta flat" id="d-hot">—</div>
-            <div class="kspark" id="s-hot"></div>
-          </div>
-          <div class="card kpi">
-            <div class="kico t">📤</div>
-            <div class="klabel">Demos Generated</div>
-            <div class="kvalue" id="k-demos">–</div>
-            <div class="kdelta flat" id="d-demos">—</div>
-            <div class="kspark" id="s-demos"></div>
-          </div>
-          <div class="card kpi">
-            <div class="kico o">📝</div>
-            <div class="klabel">Outreach Drafts</div>
-            <div class="kvalue" id="k-drafts">–</div>
-            <div class="kdelta flat" id="d-drafts">—</div>
-            <div class="kspark" id="s-drafts"></div>
-          </div>
-        </div>
-
-        <!-- charts -->
-        <div class="charts">
-          <div class="card panel area-wrap">
-            <div class="panel-head">
-              <h3>Lead Growth</h3>
-              <select class="range" id="growth-range">
-                <option value="8">This Month</option>
-                <option value="30">Last 30 pts</option>
-                <option value="5">Last 5 pts</option>
-              </select>
-            </div>
-            <div id="area-chart"></div>
-          </div>
-          <div class="card panel">
-            <div class="panel-head"><h3>Leads by Niche</h3></div>
-            <div class="donut-wrap">
-              <div id="donut-chart"></div>
-              <div class="legend" id="donut-legend"></div>
-            </div>
-          </div>
-        </div>
-
-        <p class="run-status" id="run-status">Click a lead to preview its generated demo site.</p>
-
-        <!-- recent leads -->
-        <div class="card table-card">
-          <div class="table-head">
-            <h3>Recent Leads</h3>
-            <button class="link" data-goto="leads">View all leads</button>
-          </div>
-          <div class="tscroll">
-            <table>
-              <thead><tr><th>#</th><th>Name</th><th>Niche</th><th>Status</th><th>Town</th><th>Value</th><th></th></tr></thead>
-              <tbody id="recent-tbody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- bottom banner -->
-        <div class="banner">
-          <div class="bico">🎯</div>
-          <div class="btxt">
-            <h4>Turn hot leads into revenue</h4>
-            <p>Approve a demo and its outreach draft, then send it yourself. Nothing here ever auto-sends.</p>
-          </div>
-          <button class="btn" id="banner-run">Run Pipeline</button>
-        </div>
-      </section>
-
-      <!-- ===== LEADS PAGE ===== -->
-      <section id="page-leads" class="subpage">
-        <div class="card table-card">
-          <div class="table-head"><h3>All Leads</h3></div>
-          <div class="tscroll">
-            <table>
-              <thead><tr><th>#</th><th>Name</th><th>Niche</th><th>Status</th><th>Town</th><th>Value</th><th></th></tr></thead>
-              <tbody id="all-tbody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- ===== DEMOS PAGE ===== -->
-      <section id="page-demos" class="subpage">
-        <div class="card panel"><div class="panel-head"><h3>Demos</h3></div><div id="demos-list" class="muted">Loading…</div></div>
-      </section>
-
-      <!-- ===== OUTREACH PAGE ===== -->
-      <section id="page-outreach" class="subpage">
-        <div class="card panel">
-          <div class="panel-head"><h3>Outreach Drafts</h3></div>
-          <p class="muted">Drafts only — approving here just logs the approval. Sending is a separate, deliberate step outside this dashboard.</p>
-          <div id="outreach-list" class="muted">Loading…</div>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <!-- demo preview modal -->
-  <div id="modal">
-    <div class="modal-card">
-      <div class="modal-head"><h3 id="modal-title">Demo preview</h3><button class="kebab" id="modal-close" style="font-size:1.4rem;">✕</button></div>
-      <div class="modal-body">
-        <div class="device-toggle">
-          <button data-device="Desktop" class="active">Desktop</button>
-          <button data-device="Tablet">Tablet</button>
-          <button data-device="Mobile">Mobile</button>
-        </div>
-        <div class="preview-frame-wrap">
-          <iframe id="demo-preview" title="Demo site preview"></iframe>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- chat -->
-  <button id="chat-toggle" title="Ask the Obsidian Labs assistant">💬</button>
-  <div id="chat-panel">
-    <div id="chat-header">Obsidian Labs Assistant</div>
-    <div id="chat-messages"></div>
-    <div id="chat-input-row">
-      <input id="chat-input" type="text" placeholder="Ask about your pipeline…" />
-      <button id="chat-send">Send</button>
-    </div>
-  </div>
-
-  <script>
-    /* =================================================================
-       Config
-       ================================================================= */
-    function getApiBase() { return localStorage.getItem("obsidian_api_base") || "http://localhost:8502"; }
-    function setApiBase(url) { localStorage.setItem("obsidian_api_base", url.replace(/\/$/, "")); }
-    function getRevPer() { return Number(localStorage.getItem("obsidian_rev_per")) || 2500; }
-    function setRevPer(v) { localStorage.setItem("obsidian_rev_per", String(v)); }
-
-    let API_BASE = getApiBase();
-    let leadsCache = [];
-    let currentSlug = null;
-    let currentDevice = "Desktop";
-    let currentDemoHtml = "";
-
-    const NICHE_COLORS = ["#7c3aed", "#3b82f6", "#14b8a6", "#f59e0b", "#ec4899", "#94a3b8"];
-
-    /* ---------- helpers ---------- */
-    function money(n) { return "$" + Math.round(n).toLocaleString("en-US"); }
-    function slugify(name) { return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "lead"; }
-    function isHot(l) { return String(l.is_hot_lead).toLowerCase() === "true"; }
-    function initials(name) { return (name || "?").split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase() || "?"; }
-    function hashColor(s) { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return `hsl(${Math.abs(h) % 360} 55% 55%)`; }
-    function statusPill(l) {
-      const s = l.status, perf = Number(l.perf_score) || 0;
-      if (s === "no_website") return ["No Website", "pill-bad"];
-      if (s === "unreachable") return ["Unreachable", "pill-bad"];
-      if (s === "api_error") return ["Grade Error", "pill-gray"];
-      if (isHot(l)) return ["Hot", "pill-new"];
-      if (perf <= 50) return ["Needs Work", "pill-warn"];
-      return ["Healthy", "pill-good"];
-    }
-
-    /* ---------- API (same endpoints as v1/v2) ---------- */
-    async function apiGet(path) {
-      const res = await fetch(API_BASE + path);
-      if (!res.ok) throw new Error(`${path} -> ${res.status}`);
-      return res.json();
-    }
-    async function apiPost(path, body) {
-      const res = await fetch(API_BASE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
-      if (!res.ok) throw new Error(`${path} -> ${res.status}`);
-      return res.json();
-    }
-
-    /* ---------- history (real, accumulates in localStorage) ---------- */
-    function getHistory() { try { return JSON.parse(localStorage.getItem("obsidian_history") || "[]"); } catch (e) { return []; } }
-    function pushHistory(s) {
-      const h = getHistory();
-      const last = h[h.length - 1];
-      const snap = { t: Date.now(), leads: s.leads, hot: s.hot_leads, demos: s.demos, drafts: s.outreach_drafts };
-      // only append if something changed or >1h since last, to avoid spam
-      if (!last || last.leads !== snap.leads || last.hot !== snap.hot || last.demos !== snap.demos || last.drafts !== snap.drafts || (snap.t - last.t) > 3600000) {
-        h.push(snap); while (h.length > 40) h.shift();
-        localStorage.setItem("obsidian_history", JSON.stringify(h));
-      }
-      return h;
-    }
-
-    /* ================= SVG chart helpers ================= */
-    function smoothPath(pts) {
-      if (pts.length < 2) return pts.length ? `M${pts[0].x},${pts[0].y}` : "";
-      let d = `M${pts[0].x},${pts[0].y}`;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
-        const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
-        const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
-        d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x},${p2.y}`;
-      }
-      return d;
-    }
-    function drawSpark(elId, values, color) {
-      const el = document.getElementById(elId);
-      if (!values || values.length < 2) { el.innerHTML = `<svg viewBox="0 0 100 34" preserveAspectRatio="none"></svg>`; return; }
-      const W = 100, H = 34, min = Math.min(...values), max = Math.max(...values), rng = (max - min) || 1;
-      const pts = values.map((v, i) => ({ x: (i / (values.length - 1)) * W, y: H - 3 - ((v - min) / rng) * (H - 8) }));
-      const line = smoothPath(pts);
-      const gid = "g_" + elId;
-      el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <defs><linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stop-color="${color}" stop-opacity=".25"/><stop offset="1" stop-color="${color}" stop-opacity="0"/>
-        </linearGradient></defs>
-        <path d="${line} L${W},${H} L0,${H} Z" fill="url(#${gid})"/>
-        <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>`;
-    }
-    function niceMax(v) { if (v <= 5) return 5; const p = Math.pow(10, Math.floor(Math.log10(v))); const f = v / p; const n = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10; return n * p; }
-    function drawArea(elId, hist, count) {
-      const el = document.getElementById(elId);
-      const data = hist.slice(-count);
-      if (data.length < 2) { el.innerHTML = `<div class="empty" style="padding:2.5rem 0;text-align:center;">Growth appears here as the dashboard records snapshots over time.<br>Run the pipeline a few times to fill it in.</div>`; return; }
-      const W = 580, H = 240, padL = 34, padR = 12, padT = 16, padB = 26;
-      const leads = data.map(d => d.leads), hot = data.map(d => d.hot);
-      const maxY = niceMax(Math.max(...leads, 1));
-      const xAt = i => padL + (i / (data.length - 1)) * (W - padL - padR);
-      const yAt = v => padT + (1 - v / maxY) * (H - padT - padB);
-      const mk = arr => arr.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
-      const lp = smoothPath(mk(leads)), hp = smoothPath(mk(hot));
-      const base = H - padB;
-      const grid = [0, .25, .5, .75, 1].map(f => { const y = padT + f * (H - padT - padB); const val = Math.round(maxY * (1 - f)); return `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="#eef0f3"/><text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#9ca3af">${val}</text>`; }).join("");
-      const step = Math.max(1, Math.ceil(data.length / 6));
-      const xlabels = data.map((d, i) => (i % step === 0 || i === data.length - 1) ? `<text x="${xAt(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${d.label || (i + 1)}</text>` : "").join("");
-      const lastX = xAt(data.length - 1), lastY = yAt(leads[leads.length - 1]);
-      el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
-        <defs><linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7c3aed" stop-opacity=".28"/><stop offset="1" stop-color="#7c3aed" stop-opacity="0"/></linearGradient></defs>
-        ${grid}
-        <path d="${lp} L${lastX},${base} L${padL},${base} Z" fill="url(#areaGrad)"/>
-        <path d="${hp}" fill="none" stroke="#c4b5fd" stroke-width="2.5" stroke-linecap="round"/>
-        <path d="${lp}" fill="none" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="${lastX}" cy="${lastY}" r="5" fill="#7c3aed" stroke="#fff" stroke-width="2"/>
-        <g><rect x="${Math.min(lastX - 26, W - 58)}" y="${Math.max(lastY - 34, 2)}" width="52" height="22" rx="6" fill="#fff" stroke="#e5e7eb"/><text x="${Math.min(lastX, W - 32)}" y="${Math.max(lastY - 19, 17)}" text-anchor="middle" font-size="11" font-weight="700" fill="#111827">${leads[leads.length - 1]}</text></g>
-        ${xlabels}
-      </svg>`;
-    }
-    function drawDonut(elId, legendId, segments) {
-      const el = document.getElementById(elId), leg = document.getElementById(legendId);
-      const total = segments.reduce((a, s) => a + s.value, 0);
-      const R = 70, SW = 22, C = 2 * Math.PI * R, cx = 90, cy = 90;
-      if (!total) { el.innerHTML = `<svg width="180" height="180"><circle cx="90" cy="90" r="${R}" fill="none" stroke="#eef0f3" stroke-width="${SW}"/></svg>`; leg.innerHTML = `<div class="empty">No leads yet.</div>`; return; }
-      let off = 0;
-      const arcs = segments.map(s => {
-        const len = (s.value / total) * C;
-        const seg = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}" stroke-width="${SW}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
-        off += len; return seg;
-      }).join("");
-      el.innerHTML = `<svg width="180" height="180" viewBox="0 0 180 180">${arcs}
-        <text x="90" y="86" text-anchor="middle" font-size="26" font-weight="750" fill="#111827">${total}</text>
-        <text x="90" y="106" text-anchor="middle" font-size="12" fill="#9ca3af">Total</text></svg>`;
-      leg.innerHTML = segments.map(s => {
-        const pct = Math.round((s.value / total) * 100);
-        return `<div class="legend-row"><span class="lname"><span class="swatch" style="background:${s.color}"></span>${s.label}</span><span class="lpct">${pct}%</span><span class="lval"><span class="swatch" style="background:${s.color}"></span>${s.value}</span></div>`;
-      }).join("");
-    }
-
-    /* ================= data rendering ================= */
-    function setDelta(elId, hist, key) {
-      const el = document.getElementById(elId);
-      if (hist.length < 2) { el.className = "kdelta flat"; el.textContent = "—"; return; }
-      const prev = hist[hist.length - 2][key], now = hist[hist.length - 1][key];
-      if (!prev) { el.className = "kdelta flat"; el.textContent = now ? "▲ new" : "—"; return; }
-      const pct = ((now - prev) / prev) * 100, up = pct >= 0;
-      el.className = "kdelta " + (Math.abs(pct) < 0.1 ? "flat" : up ? "up" : "down");
-      el.textContent = `${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}% vs last run`;
-    }
-    async function loadStatus() {
-      try {
-        const s = await apiGet("/api/status");
-        document.getElementById("k-leads").textContent = s.leads;
-        document.getElementById("k-hot").textContent = s.hot_leads;
-        document.getElementById("k-demos").textContent = s.demos;
-        document.getElementById("k-drafts").textContent = s.outreach_drafts;
-        const h = pushHistory(s);
-        drawSpark("s-leads", h.map(x => x.leads), "#7c3aed");
-        drawSpark("s-hot", h.map(x => x.hot), "#3b82f6");
-        drawSpark("s-demos", h.map(x => x.demos), "#14b8a6");
-        drawSpark("s-drafts", h.map(x => x.drafts), "#f59e0b");
-        setDelta("d-leads", h, "leads"); setDelta("d-hot", h, "hot"); setDelta("d-demos", h, "demos"); setDelta("d-drafts", h, "drafts");
-        drawArea("area-chart", h, Number(document.getElementById("growth-range").value));
-      } catch (e) {
-        document.getElementById("run-status").textContent = "Backend unreachable — is fastapi_backend running on :8502?";
-      }
-    }
-    async function loadLeads() {
-      try { leadsCache = await apiGet("/api/leads"); } catch (e) { leadsCache = []; }
-      renderDonut();
-      renderTable("recent-tbody", leadsCache.slice(0, 6));
-      renderTable("all-tbody", leadsCache);
-    }
-    function renderDonut() {
-      const counts = {};
-      leadsCache.forEach(l => { const k = (l.type || "other").trim() || "other"; counts[k] = (counts[k] || 0) + 1; });
-      const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-      const top = entries.slice(0, 5);
-      const restVal = entries.slice(5).reduce((a, e) => a + e[1], 0);
-      const segs = top.map((e, i) => ({ label: e[0].replace(/\b\w/g, c => c.toUpperCase()), value: e[1], color: NICHE_COLORS[i] }));
-      if (restVal) segs.push({ label: "Other", value: restVal, color: NICHE_COLORS[5] });
-      drawDonut("donut-chart", "donut-legend", segs);
-    }
-    function rowHTML(l, i) {
-      const [label, cls] = statusPill(l);
-      const val = isHot(l) ? money(getRevPer()) : "—";
-      return `<tr data-slug="${slugify(l.name)}">
-        <td>${i + 1}</td>
-        <td><div class="cell-name"><span class="avatar" style="background:${hashColor(l.name || "")}">${initials(l.name)}</span><span class="nm">${l.name || ""}</span></div></td>
-        <td>${(l.type || "").replace(/\b\w/g, c => c.toUpperCase())}</td>
-        <td><span class="pill ${cls}">${label}</span></td>
-        <td>${l.town || "—"}</td>
-        <td class="val">${val}</td>
-        <td><button class="kebab" title="Preview demo">⋮</button></td>
-      </tr>`;
-    }
-    function renderTable(tbodyId, rows) {
-      const tb = document.getElementById(tbodyId);
-      if (!rows.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">No leads yet. Run the pipeline to gather some.</td></tr>`; return; }
-      tb.innerHTML = rows.map((l, i) => rowHTML(l, i)).join("");
-      tb.querySelectorAll("tr[data-slug]").forEach(tr => tr.addEventListener("click", () => openDemo(tr.dataset.slug)));
-    }
-
-    /* ---------- demo modal ---------- */
-    async function openDemo(slug) {
-      currentSlug = slug;
-      document.getElementById("modal-title").textContent = slug;
-      document.getElementById("modal").classList.add("open");
-      const iframe = document.getElementById("demo-preview");
-      iframe.srcdoc = `<p style="font-family:system-ui;color:#999;padding:2rem;">Loading…</p>`;
-      try { const demo = await apiGet(`/api/demos/${slug}`); currentDemoHtml = demo.html; renderPreview(); }
-      catch (e) { currentDemoHtml = ""; iframe.srcdoc = `<p style="font-family:system-ui;color:#999;padding:2rem;">No demo generated yet for “${slug}”. Run the pipeline to build one.</p>`; }
-    }
-    function renderPreview() {
-      const widths = { Desktop: "100%", Tablet: "768px", Mobile: "390px" };
-      const iframe = document.getElementById("demo-preview");
-      iframe.style.width = widths[currentDevice]; iframe.style.margin = currentDevice === "Desktop" ? "0" : "0 auto";
-      if (currentDemoHtml) iframe.srcdoc = currentDemoHtml;
-    }
-    document.querySelectorAll(".device-toggle button").forEach(b => b.addEventListener("click", () => {
-      document.querySelectorAll(".device-toggle button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active"); currentDevice = b.dataset.device; renderPreview();
-    }));
-    document.getElementById("modal-close").addEventListener("click", () => document.getElementById("modal").classList.remove("open"));
-    document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") document.getElementById("modal").classList.remove("open"); });
-
-    /* ---------- demos + outreach pages ---------- */
-    async function loadDemos() {
-      const el = document.getElementById("demos-list");
-      try { const d = await apiGet("/api/demos"); el.innerHTML = d.length ? d.map(x => `<div class="legend-row" style="grid-template-columns:1fr auto;padding:.6rem 0;border-bottom:1px solid var(--border);cursor:pointer" data-slug="${x.slug}"><strong>${x.slug}</strong><button class="btn small secondary">Preview</button></div>`).join("") : `<div class="empty">No demos generated yet.</div>`; el.querySelectorAll("[data-slug]").forEach(r => r.addEventListener("click", () => openDemo(r.dataset.slug))); }
-      catch (e) { el.innerHTML = `<div class="empty">Backend unreachable.</div>`; }
-    }
-    async function loadOutreach() {
-      const el = document.getElementById("outreach-list");
-      try {
-        const drafts = await apiGet("/api/outreach");
-        if (!drafts.length) { el.innerHTML = `<div class="empty">No outreach drafts yet.</div>`; return; }
-        let html = "";
-        for (const d of drafts) { const full = await apiGet(`/api/outreach/${d.slug}`); html += `<div class="card panel" style="margin-bottom:.8rem"><strong>${d.slug}</strong><pre style="white-space:pre-wrap;font-family:inherit;font-size:.85rem;color:#374151;line-height:1.5;margin:.6rem 0 .8rem">${full.content.replace(/</g, "&lt;")}</pre><button class="btn small" data-approve="${d.slug}">Approve</button></div>`; }
-        el.innerHTML = html;
-        el.querySelectorAll("[data-approve]").forEach(b => b.addEventListener("click", async () => { await apiPost("/api/approve", { kind: "outreach_approved", identifier: b.dataset.approve }); b.textContent = "Approved ✓"; b.disabled = true; }));
-      } catch (e) { el.innerHTML = `<div class="empty">Backend unreachable.</div>`; }
-    }
-
-    /* ---------- navigation ---------- */
-    function goToPage(page) {
-      document.querySelectorAll("#nav button[data-page]").forEach(b => b.classList.toggle("active", b.dataset.page === page));
-      ["dashboard", "leads", "demos", "outreach"].forEach(p => { document.getElementById(`page-${p}`).style.display = p === page ? "" : "none"; });
-      if (page === "demos") loadDemos();
-      if (page === "outreach") loadOutreach();
-    }
-    document.querySelectorAll("#nav button[data-page]").forEach(b => b.addEventListener("click", () => goToPage(b.dataset.page)));
-    document.querySelectorAll("[data-goto]").forEach(b => b.addEventListener("click", () => goToPage(b.dataset.goto)));
-    document.getElementById("growth-range").addEventListener("change", () => drawArea("area-chart", getHistory(), Number(document.getElementById("growth-range").value)));
-
-    /* ---------- run pipeline ---------- */
-    async function runPipeline() {
-      const st = document.getElementById("run-status"); st.textContent = "Starting pipeline in the background…";
-      try { await apiPost("/api/run-pipeline", { stage: "all", towns: ["Mahopac", "Carmel"], niches: ["dentist", "roofer"], limit: 5 }); st.textContent = "Pipeline started. Check output/logs/pipeline_run.log, or refresh shortly."; }
-      catch (e) { st.textContent = "Failed to start — is the backend running?"; }
-    }
-    document.getElementById("promo-run").addEventListener("click", runPipeline);
-    document.getElementById("banner-run").addEventListener("click", runPipeline);
-
-    /* ---------- settings (backend URL + price per deal) ---------- */
-    function openSettings() {
-      const next = prompt("Backend URL (fastapi_backend address — e.g. https://xxxx.ngrok-free.app or http://localhost:8502):", getApiBase());
-      if (next && next.trim()) { setApiBase(next.trim()); API_BASE = getApiBase(); refreshAll(); }
-    }
-    document.getElementById("settings-btn").addEventListener("click", openSettings);
-    document.getElementById("nav-settings").addEventListener("click", openSettings);
-    document.getElementById("range-chip").addEventListener("click", () => {
-      const cur = getRevPer(); const n = Number((prompt("Average price per closed deal (used for the Value column):", cur) || "").replace(/[^0-9.]/g, ""));
-      if (n > 0) { setRevPer(n); renderTable("recent-tbody", leadsCache.slice(0, 6)); renderTable("all-tbody", leadsCache); }
-    });
-
-    /* ---------- chat ---------- */
-    const chatPanel = document.getElementById("chat-panel"), chatMessages = document.getElementById("chat-messages"), chatInput = document.getElementById("chat-input");
-    document.getElementById("chat-toggle").addEventListener("click", () => chatPanel.classList.toggle("open"));
-    function addChatMsg(t, who) { const d = document.createElement("div"); d.className = `chat-msg ${who}`; d.textContent = t; chatMessages.appendChild(d); chatMessages.scrollTop = chatMessages.scrollHeight; }
-    async function sendChat() {
-      const msg = chatInput.value.trim(); if (!msg) return;
-      addChatMsg(msg, "user"); chatInput.value = ""; addChatMsg("Thinking…", "bot");
-      try { const res = await apiPost("/api/chat", { message: msg }); chatMessages.lastChild.textContent = res.reply || "(no response)"; }
-      catch (e) { chatMessages.lastChild.textContent = "Couldn't reach the assistant — is fastapi_backend + Ollama running?"; }
-    }
-    document.getElementById("chat-send").addEventListener("click", sendChat);
-    chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
-
-    /* ---------- PWA + boot ---------- */
-    if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
-    function refreshAll() { loadStatus(); loadLeads(); }
-    addChatMsg("Hi! I'm your pipeline assistant. Ask about your hot leads, drafts, or pricing.", "bot");
-    refreshAll();
-    setInterval(loadStatus, 15000);
-  </script>
-</body>
-</html>
-
-```
+# Alt dashboards
 
 ## `tesla_style_dashboard_v2.html`  
 _(686 lines)_
@@ -3875,668 +4890,6 @@ _(464 lines)_
 
 ```
 
-# Automation & media
-
-## `autonomous_orchestrator.py`  
-_(240 lines)_
-
-```python
-#!/usr/bin/env python3
-"""
-Obsidian Labs - Autonomous Lead Generation Orchestrator (v2)
-Runs nightly: Scrape -> Grade -> Multi-Agent Demo Build
--> Media Enhancement -> Outreach Draft
-
-Human approval required before any outreach is sent. Nothing in this file ever sends anything.
-"""
-from __future__ import annotations
-
-import csv
-import json
-import logging
-import os
-import subprocess
-import sys
-import time
-import datetime as dt
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
-
-try:
-    import schedule
-except ImportError:
-    print("Missing dependency: pip install schedule")
-    sys.exit(1)
-
-try:
-    import requests  # only needed for Telegram; degrade gracefully if absent
-except ImportError:
-    requests = None
-
-# ---------------------------------------------------------------------------
-# Paths & config
-# ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT / "output"
-LOGS_DIR = OUTPUT_DIR / "logs"
-SEEN_FILE = OUTPUT_DIR / "seen_leads.json"
-LEADS_GRADED_CSV = OUTPUT_DIR / "leads_graded.csv"
-
-STAGE_TIMEOUT = int(os.environ.get("OL_STAGE_TIMEOUT", "1800"))
-NIGHTLY_LIMIT = int(os.environ.get("OL_NIGHTLY_LIMIT", "5"))
-RUN_AT = os.environ.get("OL_RUN_AT", "02:00")
-TELEGRAM_TOKEN = os.environ.get("OL_TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("OL_TELEGRAM_CHAT_ID", "")
-
-# ---------------------------------------------------------------------------
-# Logging (rotating file + console)
-# ---------------------------------------------------------------------------
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-logger = logging.getLogger("obsidian_orchestrator")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    fh = RotatingFileHandler(
-        LOGS_DIR / "nightly_runs.log",
-        maxBytes=2_000_000,
-        backupCount=5,
-        encoding="utf-8",
-    )
-    fh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(message)s"))
-    logger.addHandler(fh)
-
-    ch = logging.StreamHandler()
-    ch.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(ch)
-
-
-def log(msg: str, level: str = "info"):
-    getattr(logger, level)(msg)
-
-
-def notify(msg: str):
-    """Best-effort Telegram ping. Never raises."""
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID and requests):
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": f"[Obsidian Labs] {msg}"},
-            timeout=10,
-        )
-    except Exception as e:
-        log(f"Telegram notify failed: {e}", "warning")
-
-
-def load_seen() -> set:
-    if SEEN_FILE.exists():
-        try:
-            return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")))
-        except Exception as e:
-            log(f"Could not read seen file, starting fresh: {e}", "warning")
-    return set()
-
-
-def save_seen(seen: set):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2), encoding="utf-8")
-
-
-def mark_seen(new_keys):
-    seen = load_seen()
-    before = len(seen)
-    seen.update(new_keys)
-    save_seen(seen)
-    log(f"Dedup: {len(seen) - before} new lead(s) recorded, {len(seen)} total known.")
-
-
-def load_graded_leads() -> list[dict]:
-    if LEADS_GRADED_CSV.exists():
-        with LEADS_GRADED_CSV.open(newline="", encoding="utf-8") as f:
-            return list(csv.DictReader(f))
-    json_path = OUTPUT_DIR / "graded_leads.json"
-    if json_path.exists():
-        return json.loads(json_path.read_text(encoding="utf-8"))
-    return []
-
-
-def lead_key(lead: dict) -> str:
-    return lead.get("place_id") or f"{lead.get('name', '')}|{lead.get('town', '')}"
-
-
-class StageError(RuntimeError):
-    pass
-
-
-def run_stage(script: str, args: list | None = None) -> str:
-    cmd = [sys.executable, script] + (args or [])
-    log(f"Running: {' '.join(cmd)}")
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            timeout=STAGE_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        raise StageError(f"{script} timed out after {STAGE_TIMEOUT}s")
-
-    if result.returncode != 0:
-        raise StageError(
-            f"{script} failed (exit {result.returncode}): {result.stderr.strip()}"
-        )
-
-    if result.stdout.strip():
-        log(result.stdout.strip())
-    return result.stdout
-
-
-def nightly_autonomous_run(limit: int = NIGHTLY_LIMIT):
-    start = dt.datetime.now()
-    log(f"=== STARTING NIGHTLY RUN for {limit} businesses ===")
-    notify(f"Nightly run started ({limit} businesses).")
-    try:
-        log("Stage 1: Scraping local businesses...")
-        run_stage("pipeline.py", ["--stage", "scrape", "--limit", str(limit)])
-
-        log("Stage 2: Grading leads...")
-        run_stage("pipeline.py", ["--stage", "grade"])
-
-        graded = load_graded_leads()
-        seen = load_seen()
-        fresh_leads = []
-        for lead in graded:
-            key = lead_key(lead)
-            if key and key not in seen:
-                fresh_leads.append((key, lead))
-
-        if not graded:
-            log(
-                "No graded leads found (output/leads_graded.csv missing/empty).",
-                "warning",
-            )
-
-        log(f"Dedup gate: {len(fresh_leads)} of {len(graded)} graded leads are new.")
-
-        if graded and not fresh_leads:
-            log("No new leads tonight - skipping demo/media/outreach stages.")
-            notify("Nightly run finished: no new leads to process.")
-            return
-
-        log("Stage 3: Generating demos (demo_gen_local.py)...")
-        run_stage("demo_gen_local.py", ["--limit", str(limit)])
-
-        media_script = ROOT / "media_enhancer.py"
-        if media_script.exists():
-            log("Stage 4: Media enhancement...")
-            run_stage("media_enhancer.py", ["--limit", str(limit)])
-        else:
-            log("Stage 4: media_enhancer.py not found - skipping.", "warning")
-
-        outreach_script = ROOT / "outreach_generator.py"
-        if outreach_script.exists():
-            log("Stage 5: Outreach drafts ($1,495 pitch)...")
-            run_stage("outreach_generator.py", ["--limit", str(limit)])
-        else:
-            log("Stage 5: outreach_generator.py not found - skipping.", "warning")
-
-        if fresh_leads:
-            mark_seen(k for k, _ in fresh_leads)
-
-        elapsed = (dt.datetime.now() - start).total_seconds()
-        log(f"=== NIGHTLY RUN COMPLETE ({elapsed:.0f}s) ===")
-        log(
-            "Check dashboard for results. Human approval required before sending any outreach."
-        )
-        notify(
-            f"Nightly run complete in {elapsed:.0f}s. "
-            f"{len(fresh_leads)} new lead(s). Awaiting approval."
-        )
-
-    except StageError as e:
-        log(f"RUN ABORTED: {e}", "error")
-        notify(f"RUN ABORTED: {e}")
-    except Exception as e:
-        log(f"UNEXPECTED ERROR: {e}", "error")
-        notify(f"UNEXPECTED ERROR: {e}")
-
-
-schedule.every().day.at(RUN_AT).do(nightly_autonomous_run, limit=NIGHTLY_LIMIT)
-
-
-if __name__ == "__main__":
-    if "--now" in sys.argv:
-        nightly_autonomous_run(NIGHTLY_LIMIT)
-        sys.exit(0)
-
-    print("Obsidian Labs Autonomous Orchestrator (v2) started.")
-    print(f"Scheduled nightly at {RUN_AT} for {NIGHTLY_LIMIT} businesses.")
-    print("Run once now: python autonomous_orchestrator.py --now")
-    print("Press Ctrl+C to stop.")
-    while True:
-        try:
-            schedule.run_pending()
-        except Exception as e:
-            log(f"SCHEDULER LOOP ERROR: {e}", "error")
-        time.sleep(60)
-
-```
-
-## `media_enhancer.py`  
-_(183 lines)_
-
-```python
-#!/usr/bin/env python3
-"""
-Obsidian Labs - Media Enhancement Module
-Enhances real scraped photos (Pillow, $0 cost, fully local). Optional Unsplash stock
-photo fallback if UNSPLASH_ACCESS_KEY is set. Stock video/music NOT implemented (would
-need a paid API) - flagged as a TODO, not a silent no-op.
-"""
-from __future__ import annotations
-
-import argparse
-import io
-import os
-import sys
-from pathlib import Path
-
-from dotenv import load_dotenv
-from PIL import Image, ImageEnhance
-
-try:
-    import requests
-except ImportError:
-    requests = None
-
-ROOT = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT / "output"
-DEMOS_DIR = OUTPUT_DIR / "demos"
-ENV_PATH = ROOT / ".env"
-
-load_dotenv(ENV_PATH, encoding="utf-8-sig")
-UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY", "")
-
-NICHE_MOOD = {
-    "dentist": ("modern dental clinic interior", "clean, professional, trustworthy"),
-    "roofer": ("roofing contractor working on house", "rugged, dependable, craftsmanship"),
-    "restaurant": ("warm restaurant interior dining", "warm, inviting, appetizing"),
-    "bakery": ("artisan bakery fresh bread pastries", "warm, cozy, handmade"),
-    "landscaping": ("landscaped garden lawn care", "fresh, natural, well-maintained"),
-    "auto shop": ("modern auto repair garage", "precise, technical, dependable"),
-    "salon": ("modern hair salon interior", "stylish, clean, upscale"),
-    "gym": ("modern fitness gym interior", "energetic, motivating, clean"),
-}
-DEFAULT_MOOD = (
-    "professional local business storefront",
-    "clean, professional, trustworthy",
-)
-
-
-def pick_stock_query(niche: str) -> tuple[str, str]:
-    niche_key = (niche or "").strip().lower()
-    for key, val in NICHE_MOOD.items():
-        if key in niche_key:
-            return val
-    return DEFAULT_MOOD
-
-
-def enhance_existing_image(image_path: Path, output_path: Path) -> Path:
-    img = Image.open(image_path).convert("RGB")
-    img = ImageEnhance.Contrast(img).enhance(1.12)
-    img = ImageEnhance.Sharpness(img).enhance(1.15)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(output_path, quality=92)
-    return output_path
-
-
-def fetch_stock_image(query: str, dest: Path) -> Path | None:
-    if not UNSPLASH_ACCESS_KEY:
-        print(
-            "[media_enhancer] No UNSPLASH_ACCESS_KEY set in .env - skipping stock "
-            "image fallback (get a free key at unsplash.com/developers if you want this).",
-            file=sys.stderr,
-        )
-        return None
-    if requests is None:
-        print(
-            "[media_enhancer] `requests` not installed - skipping stock fallback.",
-            file=sys.stderr,
-        )
-        return None
-    try:
-        resp = requests.get(
-            "https://api.unsplash.com/photos/random",
-            params={"query": query, "orientation": "landscape"},
-            headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        image_url = data.get("urls", {}).get("regular")
-        if not image_url:
-            return None
-        img_resp = requests.get(image_url, timeout=20)
-        img_resp.raise_for_status()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
-        img.save(dest, quality=92)
-        return dest
-    except Exception as e:
-        print(f"[media_enhancer] Unsplash fetch failed: {e}", file=sys.stderr)
-        return None
-
-
-def process_lead_media(slug: str, niche: str = "") -> dict:
-    lead_dir = DEMOS_DIR / slug
-    photos_dir = lead_dir / "photos"
-    enhanced_dir = lead_dir / "media" / "enhanced"
-
-    result = {"slug": slug, "enhanced": [], "stock_fallback": None}
-
-    real_photos = []
-    if photos_dir.exists():
-        real_photos = [
-            p
-            for p in photos_dir.iterdir()
-            if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
-        ]
-
-    if real_photos:
-        for photo in real_photos:
-            out_path = enhanced_dir / photo.name
-            try:
-                enhance_existing_image(photo, out_path)
-                result["enhanced"].append(str(out_path))
-            except Exception as e:
-                print(
-                    f"[media_enhancer] Failed to enhance {photo}: {e}",
-                    file=sys.stderr,
-                )
-    else:
-        query, mood = pick_stock_query(niche)
-        stock_dest = enhanced_dir / "stock_fallback.jpg"
-        fetched = fetch_stock_image(query, stock_dest)
-        if fetched:
-            result["stock_fallback"] = str(fetched)
-            print(
-                f"[media_enhancer] {slug}: no real photos found, "
-                f"used stock fallback ({mood})."
-            )
-        else:
-            print(
-                f"[media_enhancer] {slug}: no real photos and no stock fallback available."
-            )
-
-    return result
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Obsidian Labs media enhancement")
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=5,
-        help="Max number of demo folders to process",
-    )
-    parser.add_argument(
-        "--lead-slug",
-        type=str,
-        default=None,
-        help="Process a single lead by slug",
-    )
-    args = parser.parse_args()
-
-    if not DEMOS_DIR.exists():
-        print(f"[media_enhancer] No demos directory at {DEMOS_DIR} - nothing to do.")
-        return
-
-    if args.lead_slug:
-        targets = [args.lead_slug]
-    else:
-        targets = sorted(p.name for p in DEMOS_DIR.iterdir() if p.is_dir())[: args.limit]
-
-    if not targets:
-        print("[media_enhancer] No demo folders found.")
-        return
-
-    for slug in targets:
-        process_lead_media(slug)
-
-    print(f"[media_enhancer] Processed {len(targets)} lead(s).")
-
-
-if __name__ == "__main__":
-    main()
-
-```
-
-## `outreach_generator.py`  
-_(219 lines)_
-
-```python
-#!/usr/bin/env python3
-"""
-Obsidian Labs - Outreach Email Draft Generator ($1,495 Starter pitch)
-Generates personalized outreach drafts using local Ollama, grounded in
-templates/email_system_prompt.md and the RAG index. Writes to
-output/outreach/<slug>.md - never sends anything.
-"""
-from __future__ import annotations
-
-import argparse
-import csv
-import re
-import sys
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-ROOT = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT / "output"
-OUTREACH_DIR = OUTPUT_DIR / "outreach"
-LEADS_GRADED_CSV = OUTPUT_DIR / "leads_graded.csv"
-TEMPLATES_DIR = ROOT / "templates"
-EMAIL_SYSTEM_PROMPT_PATH = TEMPLATES_DIR / "email_system_prompt.md"
-ENV_PATH = ROOT / ".env"
-CHROMA_DIR = ROOT / "chroma_db"
-
-load_dotenv(ENV_PATH, encoding="utf-8-sig")
-OLLAMA_MODEL = "qwen2.5:14b-instruct-q4_K_M"
-EMBED_MODEL = "nomic-embed-text"
-
-FALLBACK_SYSTEM_PROMPT = """You are writing cold outreach email drafts for Obsidian Labs, \
-a web design agency. Tone: low-pressure, specific to the recipient's real business, never \
-pushy, never claims to be AI-built. Pricing: Starter $1,495 / Professional $2,500 (most \
-popular) / Business Growth $4,500+. Lead with a specific, real observation about their \
-current site or online presence, not generic flattery. Keep it short - 4-6 sentences. \
-End with a soft, easy next step (not a hard CTA)."""
-
-
-def slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
-    return slug or "lead"
-
-
-def load_system_prompt() -> str:
-    if EMAIL_SYSTEM_PROMPT_PATH.exists():
-        return EMAIL_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    print(
-        f"[outreach_generator] No {EMAIL_SYSTEM_PROMPT_PATH} found - using a baked-in "
-        "fallback voice/pricing prompt instead.",
-        file=sys.stderr,
-    )
-    return FALLBACK_SYSTEM_PROMPT
-
-
-def load_hot_leads(limit: int) -> list[dict]:
-    if not LEADS_GRADED_CSV.exists():
-        print(
-            f"[outreach_generator] No {LEADS_GRADED_CSV} found - nothing to draft.",
-            file=sys.stderr,
-        )
-        return []
-    with LEADS_GRADED_CSV.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    hot = [
-        r
-        for r in rows
-        if str(r.get("is_hot_lead", "")).strip().lower() in ("true", "1", "yes")
-    ]
-    return (hot or rows)[:limit]
-
-
-def get_retriever():
-    if not CHROMA_DIR.exists():
-        return None
-    try:
-        from langchain_chroma import Chroma
-        from langchain_ollama import OllamaEmbeddings
-
-        embeddings = OllamaEmbeddings(model=EMBED_MODEL)
-        return Chroma(
-            persist_directory=str(CHROMA_DIR),
-            embedding_function=embeddings,
-        )
-    except Exception as e:
-        print(
-            f"[outreach_generator] RAG retriever unavailable ({e}) - continuing without it.",
-            file=sys.stderr,
-        )
-        return None
-
-
-def retrieve_context(vectorstore, query: str, k: int = 3) -> str:
-    if vectorstore is None:
-        return ""
-    try:
-        docs = vectorstore.similarity_search(query, k=k)
-        return "\n\n".join(d.page_content for d in docs)
-    except Exception as e:
-        print(f"[outreach_generator] RAG retrieval failed: {e}", file=sys.stderr)
-        return ""
-
-
-def build_prompt(lead: dict, system_prompt: str, retrieved_context: str) -> str:
-    name = lead.get("name", "this business")
-    town = lead.get("town", "")
-    niche = lead.get("type", "local business")
-    status = lead.get("status", "")
-    perf = lead.get("perf_score", "")
-
-    site_note = (
-        "no live website"
-        if status == "no_website"
-        else f"a website scoring {perf}/100 on performance"
-    )
-
-    context_block = (
-        "\n\nBackground context from past work (for tone/voice only, do not invent "
-        f"facts about this specific business):\n{retrieved_context}"
-        if retrieved_context
-        else ""
-    )
-
-    return f"""{system_prompt}
-
-Write ONE outreach email draft for:
-Business name: {name}
-Niche: {niche}
-Town: {town}
-Current site status: {site_note}
-Subject line style example: "Quick question about your {niche} website in {town}"
-
-{context_block}
-Output format:
-Subject: <subject line>
-<email body>
-"""
-
-
-def generate_draft(lead: dict, llm, vectorstore, system_prompt: str) -> str:
-    query = f"{lead.get('type', '')} outreach tone pricing"
-    context = retrieve_context(vectorstore, query)
-    prompt = build_prompt(lead, system_prompt, context)
-    return llm.invoke(prompt)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Obsidian Labs outreach draft generator")
-    parser.add_argument(
-        "--limit", type=int, default=5, help="Max number of leads to draft for"
-    )
-    parser.add_argument(
-        "--lead-slug",
-        type=str,
-        default=None,
-        help="Draft for a single lead by slug",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Regenerate even if a draft already exists",
-    )
-    args = parser.parse_args()
-
-    try:
-        from langchain_ollama import OllamaLLM
-    except ImportError:
-        print(
-            "[outreach_generator] Missing dependency: pip install langchain-ollama",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    OUTREACH_DIR.mkdir(parents=True, exist_ok=True)
-    system_prompt = load_system_prompt()
-    vectorstore = get_retriever()
-    llm = OllamaLLM(model=OLLAMA_MODEL)
-
-    leads = load_hot_leads(limit=1000)
-    if args.lead_slug:
-        leads = [l for l in leads if slugify(l.get("name", "")) == args.lead_slug]
-        if not leads:
-            print(
-                f"[outreach_generator] No lead found matching slug '{args.lead_slug}'.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    else:
-        leads = leads[: args.limit]
-
-    if not leads:
-        print("[outreach_generator] No leads to draft for.")
-        return
-
-    written = 0
-    for lead in leads:
-        slug = slugify(lead.get("name", ""))
-        out_path = OUTREACH_DIR / f"{slug}.md"
-        if out_path.exists() and not args.force:
-            print(
-                f"[outreach_generator] Skipping {slug} - draft already exists "
-                "(use --force to regenerate)."
-            )
-            continue
-        print(f"[outreach_generator] Drafting outreach for {lead.get('name')}...")
-        try:
-            draft = generate_draft(lead, llm, vectorstore, system_prompt)
-        except Exception as e:
-            print(f"[outreach_generator] FAILED for {slug}: {e}", file=sys.stderr)
-            continue
-        out_path.write_text(draft.strip() + "\n", encoding="utf-8")
-        written += 1
-        print(f"[outreach_generator] Wrote {out_path}")
-
-    print(f"[outreach_generator] Done. {written} draft(s) written to {OUTREACH_DIR}.")
-
-
-if __name__ == "__main__":
-    main()
-
-```
-
 # PWA shell
 
 ## `manifest.json`  
@@ -4808,28 +5161,6 @@ _(82 lines)_
 
 ```
 
-## `templates/reference_demos/README.md`  
-_(16 lines)_
-
-```markdown
-# Reference demos
-
-`demo_gen_local.py` optionally loads one file here as a **few-shot code-quality
-example** — a concrete "this is the bar" sample the local model imitates for
-structure and polish (never for content).
-
-- `wallys-super-service.html` — a **sample** reference (a fictional auto shop),
-  provided so demo generation has a quality bar out of the box. It is not a real
-  client. Replace it with one of your own best shipped demos for higher fidelity
-  to your actual style.
-
-The generator is explicitly told to copy *technique*, not content — it must never
-reuse the reference business's name, address, phone, or reviews for a different lead.
-If this folder is empty, demo generation still works (it just runs without a few-shot
-example, and prints a NOTE).
-
-```
-
 # Config & deps
 
 ## `requirements.txt`  
@@ -4945,6 +5276,190 @@ __pycache__/
 *.py[cod]
 venv/
 .venv/
+
+```
+
+## `START.bat`  
+_(110 lines)_
+
+```bat
+@echo off
+setlocal
+cd /d "%~dp0"
+title Obsidian Labs
+
+echo.
+echo =====================================
+echo     Obsidian Labs - Launcher
+echo =====================================
+echo.
+
+REM --- 1. prerequisites ---------------------------------------------
+where python >nul 2>&1
+if errorlevel 1 (
+  echo [X] Python is not installed.
+  echo     Install it from https://www.python.org/downloads/
+  echo     IMPORTANT: on the first screen, tick "Add Python to PATH".
+  echo     Then double-click this file again.
+  echo.
+  pause
+  exit /b 1
+)
+where ollama >nul 2>&1
+if errorlevel 1 (
+  echo [X] Ollama is not installed.
+  echo     Install it from https://ollama.com/download
+  echo     Then double-click this file again.
+  echo.
+  pause
+  exit /b 1
+)
+
+REM --- desktop shortcut (first run only) ---------------------------
+if not exist ".shortcut_done" call :make_shortcut
+
+REM --- 2. environment + packages (first run only) ------------------
+if not exist "venv\Scripts\activate.bat" (
+  echo [1/4] Creating the Python environment. First run only, one moment...
+  python -m venv venv
+)
+call "venv\Scripts\activate.bat"
+
+if not exist ".setup_done" (
+  echo [2/4] Installing packages. First run, this takes a few minutes...
+  python -m pip install --upgrade pip >nul
+  python -m pip install -r requirements.txt
+  echo.
+  echo [2/4] Downloading the local AI models. First run only, several GB...
+  ollama pull qwen2.5:14b-instruct-q4_K_M
+  ollama pull nomic-embed-text
+  echo done> ".setup_done"
+) else (
+  echo [2/4] Packages and models already set up. Skipping.
+)
+
+REM --- 3. config + API key (first run only) -----------------------
+if not exist ".env" (
+  copy /y ".env.example" ".env" >nul
+  echo.
+  echo [3/4] Paste your Google API key below, then press Enter.
+  echo       It needs Places API + PageSpeed Insights API enabled.
+  set /p GKEY=Key:
+  python -c "import pathlib,re,os;p=pathlib.Path('.env');t=p.read_text(encoding='utf-8');t=re.sub(r'^GOOGLE_API_KEY=.*','GOOGLE_API_KEY='+os.environ.get('GKEY',''),t,flags=re.M);p.write_text(t,encoding='utf-8')"
+  echo       Saved to .env
+) else (
+  echo [3/4] Config already exists. Skipping.
+)
+
+REM --- 3b. import any past demos into the dashboard ---------------
+echo Importing your past demo websites, if any...
+python import_demos.py
+echo Pulling demos from your GitHub repos...
+python import_github_demos.py
+
+REM --- 4. launch ---------------------------------------------------
+echo [4/4] Starting Ollama and the backend, then opening the dashboard...
+start "Ollama" cmd /k ollama serve
+timeout /t 2 >nul
+start "Obsidian Backend" cmd /k "call venv\Scripts\activate.bat && uvicorn fastapi_backend:app --port 8502"
+timeout /t 5 >nul
+start "" "dashboard_leadflow.html"
+
+echo.
+echo =====================================
+echo   All set.
+echo   - Two windows opened: Ollama + Backend. Keep them open while you work.
+echo   - The dashboard opened in your browser. Click "Run Pipeline" to begin.
+echo   - Want it on your phone? Double-click PHONE_ACCESS.bat.
+echo   - You can close THIS window now.
+echo =====================================
+echo.
+pause
+exit /b 0
+
+REM ================= subroutines =================
+:make_shortcut
+set "VBS=%TEMP%\ol_shortcut.vbs"
+> "%VBS%" echo Set oWS = CreateObject("WScript.Shell")
+>> "%VBS%" echo sLink = oWS.SpecialFolders("Desktop") ^& "\Obsidian Labs.lnk"
+>> "%VBS%" echo Set oLink = oWS.CreateShortcut(sLink)
+>> "%VBS%" echo oLink.TargetPath = "%~f0"
+>> "%VBS%" echo oLink.WorkingDirectory = "%~dp0"
+>> "%VBS%" echo oLink.IconLocation = "%SystemRoot%\System32\SHELL32.dll, 43"
+>> "%VBS%" echo oLink.Save
+cscript //nologo "%VBS%" >nul 2>&1
+del "%VBS%" >nul 2>&1
+echo done> ".shortcut_done"
+echo Created a "Obsidian Labs" shortcut on your Desktop.
+goto :eof
+
+```
+
+## `PHONE_ACCESS.bat`  
+_(62 lines)_
+
+```bat
+@echo off
+setlocal
+cd /d "%~dp0"
+title Obsidian Labs - Phone Access
+
+echo.
+echo =====================================
+echo    Obsidian Labs - Phone Access
+echo =====================================
+echo.
+echo This makes your dashboard reachable on your phone.
+echo Make sure START.bat is already running first.
+echo.
+
+where ngrok >nul 2>&1
+if errorlevel 1 (
+  echo [X] ngrok is not installed. One-time setup:
+  echo     1. Download it free:  https://ngrok.com/download
+  echo     2. Make a free account, copy your authtoken from the ngrok dashboard.
+  echo     3. Run once:  ngrok config add-authtoken YOUR_TOKEN
+  echo        ^(open ngrok once and it will show you exactly this command^)
+  echo     Then double-click this file again.
+  echo.
+  pause
+  exit /b 1
+)
+
+echo Opening a secure tunnel to your backend on port 8502...
+start "ngrok tunnel - keep open" cmd /k ngrok http 8502
+echo Waiting for the tunnel to come up...
+timeout /t 6 >nul
+
+set "URL="
+for /f "usebackq delims=" %%U in (`python -c "import urllib.request,json;d=json.load(urllib.request.urlopen('http://localhost:4040/api/tunnels'));print(next((t['public_url'] for t in d['tunnels'] if t['public_url'].startswith('https')),''))" 2^>nul`) do set "URL=%%U"
+
+echo.
+if defined URL (
+  echo =====================================
+  echo   YOUR PHONE URL:
+  echo   %URL%
+  echo =====================================
+  echo %URL%| clip
+  echo   ^(copied to your clipboard^)
+  echo %URL%> phone_url.txt
+  echo   ^(also saved to phone_url.txt^)
+  echo.
+  echo On your phone:
+  echo   1. Open the dashboard.
+  echo   2. Tap the settings / backend option.
+  echo   3. Paste this URL and save.
+) else (
+  echo Could not read the URL automatically.
+  echo Look in the "ngrok tunnel" window for the line that looks like:
+  echo    Forwarding   https://xxxx.ngrok-free.app  -^>  http://localhost:8502
+  echo Copy that https address and paste it into your phone dashboard's settings.
+)
+echo.
+echo Keep the ngrok window open while using your phone. Its URL changes each time
+echo you restart it, so re-run this and re-paste if you restart ngrok.
+echo.
+pause
 
 ```
 
@@ -5212,34 +5727,220 @@ Runs 100% locally. The chat widget talks to local Ollama
 
 ````
 
-## `docs/README.md`  
-_(23 lines)_
+## `HOW_TO_RUN.md`  
+_(53 lines)_
 
 ```markdown
-# Obsidian Labs — Docs
+# How to run Obsidian Labs — no typing required
 
-Reference material for the pipeline and business around it.
+You never have to touch PowerShell. After a one-time install of two free programs,
+running the whole system is a **double-click**.
 
-| Doc | What it is |
-| --- | --- |
-| [business-playbook.md](business-playbook.md) | The full **find → build → ship → sell** playbook for selling premium one-page sites to local businesses (niche demos, Google Maps prospecting, outreach templates, pricing, follow-up). Synthesized from @bounceidc's July 2026 thread + Claude Code setup details. |
-| [dashboard-v2-prompt.md](dashboard-v2-prompt.md) | A ready-to-paste prompt for generating a **v2 dashboard** — a Tesla/Apple-style dark glassmorphism redesign of `tesla_style_dashboard_with_chat.html` that keeps every current feature and needs **no backend changes**. |
-| [tesla-dashboard-blueprint.md](tesla-dashboard-blueprint.md) | The **design blueprint** the v2 prompt refers to — color tokens, glassmorphism card CSS, animated status ring, layout sketch, and the feature list (command palette, live activity feed, KPI + Potential Revenue cards). |
+## One-time setup (about 15 minutes)
 
-## How these fit together
+**1. Install two programs** (normal double-click installers — no terminal):
+- **Python** — https://www.python.org/downloads/
+  → On the very first screen, **tick "Add Python to PATH"**, then Install.
+- **Ollama** — https://ollama.com/download → Install.
 
-- **business-playbook.md** is the *why/how you make money* — the sales loop the pipeline feeds.
-- **dashboard-v2-prompt.md** + **tesla-dashboard-blueprint.md** are the *design spec* for the next
-  iteration of the dashboard UI. The current shipped dashboard is the light-themed
-  `../tesla_style_dashboard_with_chat.html`; these two describe the dark "premium" v2 that would
-  replace its look while reusing the same `fastapi_backend.py` API contract.
+**2. Get a Google API key** (free tier is plenty):
+- Follow the steps in the chat, or the short version:
+  console.cloud.google.com → new project → enable **Places API** + **PageSpeed Insights API**
+  → Credentials → **Create API key** → copy it.
 
-> Note: the v2 blueprint suggests a Next.js/React/Tailwind stack in one section, but the
-> prompt itself asks for a **single self-contained HTML file** that works with the existing
-> FastAPI backend on port 8502 — that single-file path is the one that matches how the current
-> dashboard is built and deployed (GitHub Pages + ngrok, no build step).
+**3. Get the project onto your laptop** (in the browser, no terminal):
+- Go to the repo on github.com (signed in).
+- Switch to the branch **`claude/powershell-capabilities-pmxppx`**.
+- Click the green **Code** button → **Download ZIP**.
+- Unzip it (right-click → Extract All). Open the `obsidian-local-pipeline` folder inside.
+
+## Run it — every time
+
+**Double-click `START.bat`.**
+
+- The **first** time, it installs everything and asks you to **paste your Google API key** — paste it, press Enter, and wait (the AI models are a few GB, one-time).
+- It then opens two small windows (Ollama + Backend) and launches the **dashboard** in your browser.
+- Click **Run Pipeline** and your leads start coming in.
+
+**Every day after**, just double-click `START.bat` again — it skips setup and opens straight to the dashboard in a few seconds.
+
+> On the first run it also drops an **"Obsidian Labs" shortcut on your Desktop** automatically — after that, just double-click the desktop icon.
+
+## Notes
+- Keep the two little windows (Ollama + Backend) open while you use the dashboard. Closing them stops the app. Double-click `START.bat` to bring it all back.
+- If Windows shows a blue "Windows protected your PC" box the first time, click **More info → Run anyway** (it's your own file).
+- If the Ollama window says "address already in use," that's fine — Ollama was already running.
+- To change your API key later, delete the `.env` file and double-click `START.bat` again; it'll ask for the key again.
+
+## Want it on your phone too?
+Also a double-click: **`PHONE_ACCESS.bat`** (with `START.bat` already running).
+
+- **First time only:** install **ngrok** (free, ngrok.com), make a free account, and run its
+  one-time `ngrok config add-authtoken …` line (ngrok shows you the exact command).
+- Then double-click **`PHONE_ACCESS.bat`**. It opens the tunnel, **copies your phone URL to
+  the clipboard**, and saves it to `phone_url.txt`.
+- On your phone: open the dashboard → settings/backend → paste the URL → save.
+
+The ngrok URL changes each time you restart it, so if you restart ngrok, re-run
+`PHONE_ACCESS.bat` and re-paste the new URL.
 
 ```
+
+## `AGENT_SETUP.md`  
+_(150 lines)_
+
+````markdown
+# Obsidian Labs — Automated Setup Runbook (for a Claude coding agent)
+
+**How to use this (for the human):** Open this project in Claude Code on your laptop
+(desktop app or CLI), paste or attach this file, and say:
+*"Follow AGENT_SETUP.md to set up and launch this app on my machine."*
+The agent will do everything below. The only thing it will ask you for is your Google API key.
+
+---
+
+## Agent instructions
+
+You are setting up a **fully local, $0-cost AI lead-generation pipeline** on the user's
+**Windows** laptop. Flow: scrape local businesses → grade their websites → generate demo
+sites with a local LLM (Ollama) → draft outreach emails → the user reviews/approves in a
+dashboard → the user sends manually. **Nothing auto-sends. Never send email. Never commit
+secrets.** Work step by step, verify each step, and report a short status at the end.
+
+### Guardrails
+- Do not print, log, or commit the contents of `.env` or the API key. `.env` is gitignored — keep it that way.
+- Do not run the `outreach`/send anything externally. This setup only installs and launches.
+- If a step fails, stop, show the exact error, and propose the fix — don't silently continue.
+- Prefer detecting-then-skipping: never reinstall something that's already present and working.
+
+### Step 1 — Detect what's already installed
+Run these and record which succeed:
+```powershell
+git --version
+python --version
+ollama --version
+ngrok --version   # optional, only needed for phone access
+```
+For anything missing, install it with winget (Windows Package Manager). If winget itself is
+missing, direct the user to the download page instead.
+```powershell
+winget install --id Git.Git -e --source winget
+winget install --id Python.Python.3.12 -e --source winget   # ensure it's on PATH
+winget install --id Ollama.Ollama -e --source winget
+winget install --id ngrok.ngrok -e --source winget          # optional (phone access)
+```
+After installing Python, open a fresh shell (or refresh PATH) so `python` resolves.
+
+### Step 2 — Get the project onto the laptop
+If you are already inside the `obsidian-local-pipeline` folder (it contains `fastapi_backend.py`
+and `requirements.txt`), use it in place. Otherwise clone it:
+```powershell
+cd $env:USERPROFILE
+git clone --branch claude/powershell-capabilities-pmxppx --depth 1 `
+  https://github.com/themortgagemaster01-eng/anthony-nigrelli-mortgage.git obsidian_new
+cd obsidian_new\obsidian-local-pipeline
+```
+If the user already has an engine folder at `C:\Users\Laptop\obsidian-local-pipeline`, copy the
+files from this folder into it and work there instead (so engine + dashboards live together).
+
+### Step 3 — Python environment + dependencies
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+Verify: `python -c "import fastapi, uvicorn, pandas, streamlit; print('deps ok')"`.
+
+### Step 4 — Local AI models (first time downloads several GB)
+```powershell
+ollama pull qwen2.5:14b-instruct-q4_K_M
+ollama pull nomic-embed-text
+```
+Verify: `ollama list` shows both models.
+
+### Step 5 — Configuration + API key
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+Then **ask the user for their Google API key** (needs *Places API* + *PageSpeed Insights API*
+enabled). Write it into `.env` without echoing it back:
+```powershell
+$key = Read-Host "Paste your Google API key"
+(Get-Content .env) -replace '^GOOGLE_API_KEY=.*', "GOOGLE_API_KEY=$key" | Set-Content .env
+```
+Leave the other `.env` values at their defaults unless the user asks to change paths.
+If the user's Google Drive / Obsidian vault paths differ from the defaults, update
+`GDRIVE_PATH` and `OBSIDIAN_VAULT_PATH` (RAG works better with them, but degrades gracefully).
+
+### Step 5b — Import the user's past demos into the dashboard
+The user has previously-built demos in three places. Pull them all in:
+```powershell
+python import_demos.py            # from Google Drive + Obsidian/Shipper vault + seed_demos/
+python import_github_demos.py     # from the user's public GitHub demo repos
+```
+`import_demos.py` copies each demo to `output\demos\<slug>\index.html` (fix `GDRIVE_PATH` /
+`OBSIDIAN_VAULT_PATH` in `.env` first if they don't point at the folders holding the demos,
+or drop files into `seed_demos\`). `import_github_demos.py` clones the repos listed at the top
+of that file (mahopac-demos, castro-tax-demo, xtrachange-demo, mrnicks-demo, obsidianlabs-demo)
+and imports their `index.html` demos, including per-business subfolders in a collection repo
+like `mahopac-demos`. After both, run `python -c "import os;print(os.listdir('output/demos'))"`
+and report which demos were imported.
+Also worth doing if the user wants on-brand output: if they have a real design-standards /
+demo prompt in Drive (e.g. `demo_system_prompt_UPDATED_*.md`, `SKILL_obsidian-web-design-standards`),
+copy its content over `templates\demo_system_prompt.md` (and their voice doc over
+`templates\email_system_prompt.md`).
+
+### Step 6 — Launch
+Start each long-running piece in its own window and leave them running:
+```powershell
+Start-Process powershell -ArgumentList '-NoExit','-Command','ollama serve'
+Start-Sleep 2
+Start-Process powershell -ArgumentList '-NoExit','-Command',"cd '$PWD'; .\venv\Scripts\Activate.ps1; uvicorn fastapi_backend:app --port 8502"
+Start-Sleep 5
+Start-Process .\dashboard_leadflow.html
+```
+
+### Step 7 — Verify it works
+```powershell
+# backend should return JSON with leads/hot/demos/outreach counts
+Invoke-RestMethod http://localhost:8502/api/status
+```
+Success = that returns an object (zeros are fine before the first pipeline run) and the
+dashboard opens in the browser. Then optionally kick a tiny test run:
+```powershell
+python pipeline.py --stage scrape --towns Mahopac --niches dentist --limit 2
+python pipeline.py --stage grade
+```
+Check `output\leads_graded.csv` exists and the dashboard shows the leads after a refresh.
+
+### Step 8 — (Optional) phone access
+Only if the user wants it and ngrok is installed + authtokened:
+```powershell
+Start-Process powershell -ArgumentList '-NoExit','-Command','ngrok http 8502'
+```
+Then read the `https://…ngrok…` URL from `http://localhost:4040/api/tunnels` and give it to the
+user to paste into the dashboard's settings on their phone. (There is also a `PHONE_ACCESS.bat`
+that does this in one double-click.)
+
+### Report back
+End with a short summary: what was already installed, what you installed, whether the backend
+responded, whether the test run produced leads, and any follow-ups the user must do (e.g. enable
+a Google API, add billing, fix a Drive path). Do not include the API key in the summary.
+
+---
+
+## Notes for the agent
+- `scraper.py` and `grader.py` are faithful re-implementations of the documented Google
+  Places / PageSpeed interface — they need `GOOGLE_API_KEY`. If the user has their own
+  versions, prefer theirs.
+- The `templates/*.md` prompts are starter content; they work, but the user's real
+  design-standards / voice docs (via the RAG index) make output more on-brand.
+- Three dashboard skins ship (`dashboard_leadflow.html` default, `tesla_style_dashboard_v2.html`,
+  `tesla_style_dashboard_with_chat.html`) — all use the same backend, no backend changes.
+- Everything is local. The chat widget and demo/outreach generation call local Ollama only.
+
+````
 
 ## `docs/business-playbook.md`  
 _(277 lines)_
@@ -5801,7 +6502,22 @@ Build a premium production-ready interface that feels like Tesla software. Avoid
 
 ````
 
-# Self-contained previews (sample-data copies of the dashboards)
+# Other files
+
+## `NEW_REQUIREMENTS_ADD_2026-07-10.txt`  
+_(9 lines)_
+
+```text
+# Add these lines to your existing requirements.txt (don't replace the whole file -
+# just append anything from this list you don't already have), then:
+#   pip install -r requirements.txt
+fastapi>=0.110,<1.0
+uvicorn>=0.29,<1.0
+pydantic>=2.0,<3.0
+requests>=2.31,<3.0
+pillow>=10.0,<11.0
+
+```
 
 ## `dashboard_leadflow_preview.html`  
 _(710 lines)_
@@ -6513,6 +7229,551 @@ _(710 lines)_
     addChatMsg("Hi! I'm your pipeline assistant. Ask about your hot leads, drafts, or pricing.", "bot");
     refreshAll();
     setInterval(loadStatus, 15000);
+  </script>
+</body>
+</html>
+
+```
+
+## `dashboard_preview.html`  
+_(539 lines)_
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Obsidian Labs - Dashboard Preview</title>
+  <meta name="theme-color" content="#f8f9fa" />
+  <style>
+    :root {
+      --red: #cc0000;
+      --red-dark: #a30000;
+      --bg: #f8f9fa;
+      --card: #ffffff;
+      --border: #eee;
+      --text: #111;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    html, body { background: var(--bg); }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .preview-banner {
+      background: #111; color: #fff; font-size: 0.78rem; text-align: center;
+      padding: 0.5rem 1rem; letter-spacing: 0.01em;
+    }
+    .preview-banner strong { color: #ff6b6b; }
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+    .topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 1rem; border-bottom: 1px solid var(--border);
+      margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap;
+    }
+    .brand { font-weight: 700; font-size: 1.2rem; letter-spacing: -0.02em; }
+    .navtabs { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+    .navtabs button {
+      background: none; border: none; padding: 0.5rem 1rem; border-radius: 9999px;
+      font-weight: 600; cursor: pointer; color: var(--muted);
+    }
+    .navtabs button.active { background: #111; color: white; }
+    .navmeta { font-size: 0.8rem; color: var(--muted); text-align: right; }
+    .metrics {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 1rem; margin-bottom: 1.5rem;
+    }
+    .metric-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1.25rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .metric-card .label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
+    .metric-card .value { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .btn {
+      border-radius: 9999px; padding: 0.6rem 1.6rem; font-weight: 600; border: none;
+      background: var(--red); color: white; cursor: pointer; transition: all 0.15s;
+    }
+    .btn:hover { background: var(--red-dark); transform: translateY(-1px); }
+    .btn.secondary { background: #eee; color: #111; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .section {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1.5rem; margin-bottom: 1.5rem;
+    }
+    .section h2 { margin-top: 0; font-size: 1.1rem; }
+    .two-col { display: grid; grid-template-columns: 2fr 3fr; gap: 1.5rem; }
+    @media (max-width: 900px) {
+      .two-col { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .wrap { padding: 1.25rem 1rem 4rem; }
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--border); }
+    td.num { font-variant-numeric: tabular-nums; }
+    tr.lead-row { cursor: pointer; }
+    tr.lead-row:hover { background: #fafafa; }
+    .pill {
+      display: inline-block; padding: 3px 10px; border-radius: 9999px;
+      font-size: 0.75rem; font-weight: 600;
+    }
+    .pill-red { background: #ef4444; color: #fff; }
+    .pill-amber { background: #f59e0b; color: #111; }
+    .pill-green { background: #22c55e; color: #111; }
+    .pill-gray { background: #6b7280; color: #fff; }
+    .device-toggle { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .device-toggle button {
+      padding: 0.35rem 0.9rem; border-radius: 9999px; border: 1px solid var(--border);
+      background: white; cursor: pointer; font-size: 0.8rem;
+    }
+    .device-toggle button.active { background: #111; color: white; border-color: #111; }
+    .preview-frame-wrap { display: flex; justify-content: center; }
+    iframe#demo-preview {
+      border: 1px solid var(--border); border-radius: 16px;
+      width: 100%; height: 640px; background: white;
+    }
+    .draft-card {
+      border: 1px solid var(--border); border-radius: 12px;
+      padding: 1rem; margin-bottom: 0.75rem;
+    }
+    .draft-card pre { white-space: pre-wrap; font-family: inherit; font-size: 0.85rem; }
+    #chat-toggle {
+      position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px;
+      border-radius: 50%; background: var(--red); color: white; border: none;
+      font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.2); z-index: 50;
+    }
+    #chat-panel {
+      position: fixed; bottom: 90px; right: 24px; width: 340px; max-height: 480px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18); display: none;
+      flex-direction: column; z-index: 50; overflow: hidden;
+    }
+    #chat-panel.open { display: flex; }
+    #chat-header { background: #111; color: white; padding: 0.75rem 1rem; font-weight: 600; }
+    #chat-messages {
+      flex: 1; overflow-y: auto; padding: 0.75rem 1rem; font-size: 0.85rem;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .chat-msg { padding: 0.5rem 0.75rem; border-radius: 12px; max-width: 85%; }
+    .chat-msg.user { align-self: flex-end; background: var(--red); color: white; }
+    .chat-msg.bot { align-self: flex-start; background: #f1f1f1; color: #111; }
+    #chat-input-row { display: flex; border-top: 1px solid var(--border); }
+    #chat-input { flex: 1; border: none; padding: 0.75rem; font-size: 0.85rem; }
+    #chat-send { border: none; background: var(--red); color: white; padding: 0 1rem; cursor: pointer; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    button:focus-visible, .navtabs button:focus-visible, tr.lead-row:focus-visible {
+      outline: 2px solid var(--red); outline-offset: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="preview-banner">
+    <strong>Preview</strong> &middot; sample data, no live backend &mdash; this is exactly how the dashboard looks &amp; behaves once <code>fastapi_backend</code> is running on your laptop.
+  </div>
+  <div class="wrap">
+    <div class="topnav">
+      <div class="brand">&#9632; Obsidian Labs</div>
+      <div class="navtabs">
+        <button data-page="dashboard" class="active">Dashboard</button>
+        <button data-page="leads">Leads</button>
+        <button data-page="demos">Demos</button>
+        <button data-page="outreach">Outreach</button>
+      </div>
+      <div class="navmeta" id="nav-meta">Runs 100% locally. Nothing auto-sends.</div>
+      <button class="btn secondary" id="settings-btn" title="Set backend URL">&#9881;</button>
+    </div>
+
+    <div class="metrics">
+      <div class="metric-card"><div class="label">Leads</div><div class="value" id="m-leads">-</div></div>
+      <div class="metric-card"><div class="label">Hot leads</div><div class="value" id="m-hot">-</div></div>
+      <div class="metric-card"><div class="label">Demos generated</div><div class="value" id="m-demos">-</div></div>
+      <div class="metric-card"><div class="label">Outreach drafts</div><div class="value" id="m-outreach">-</div></div>
+    </div>
+
+    <div id="page-dashboard">
+      <div class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+          <button class="btn" id="run-pipeline-btn">Run Pipeline</button>
+          <button class="btn secondary" id="approve-btn" disabled>Approve &amp; Send</button>
+        </div>
+        <p class="muted" id="run-status">Tap a lead below to preview its generated demo site.</p>
+      </div>
+      <div class="two-col">
+        <div class="section">
+          <h2>Leads</h2>
+          <table>
+            <thead><tr><th>Business</th><th>Niche</th><th>Score</th><th>Status</th></tr></thead>
+            <tbody id="leads-tbody"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="section">
+          <h2>HTML Preview</h2>
+          <div class="device-toggle">
+            <button data-device="Desktop" class="active">Desktop</button>
+            <button data-device="Tablet">Tablet</button>
+            <button data-device="Mobile">Mobile</button>
+          </div>
+          <div class="preview-frame-wrap">
+            <iframe id="demo-preview" title="Demo site preview" srcdoc="<p style='font-family:sans-serif;color:#999;padding:2rem;'>Select a lead to preview its demo.</p>"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="page-leads" style="display:none;">
+      <div class="section">
+        <h2>All Leads</h2>
+        <table>
+          <thead><tr><th>Business</th><th>Niche</th><th>Town</th><th>Score</th><th>Hot?</th></tr></thead>
+          <tbody id="leads-full-tbody"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="page-demos" style="display:none;">
+      <div class="section">
+        <h2>Demos</h2>
+        <div id="demos-list" class="muted">Loading...</div>
+      </div>
+    </div>
+
+    <div id="page-outreach" style="display:none;">
+      <div class="section">
+        <h2>Outreach Drafts</h2>
+        <p class="muted">Drafts only - approving here just logs the approval. Sending is a separate, deliberate step outside this dashboard.</p>
+        <div id="outreach-list" class="muted">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <button id="chat-toggle" title="Ask the Obsidian Labs assistant">&#128172;</button>
+  <div id="chat-panel">
+    <div id="chat-header">Obsidian Labs Assistant</div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <input id="chat-input" type="text" placeholder="Ask about your pipeline..." />
+      <button id="chat-send">Send</button>
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------------
+    // PREVIEW BUILD: the real dashboard fetches everything from
+    // fastapi_backend on :8502. Here that network layer is replaced with
+    // baked-in sample data so the page is fully self-contained and works
+    // as a shareable link with no laptop/backend. Every interaction below
+    // behaves exactly as it does against the live backend.
+    // ---------------------------------------------------------------------
+    const DEMO_DENTAL = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+      *{margin:0;box-sizing:border-box;font-family:system-ui,sans-serif}
+      .hero{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;padding:64px 28px;text-align:center}
+      .hero h1{font-size:2rem;letter-spacing:-.02em}.hero p{opacity:.9;margin-top:10px}
+      .cta{display:inline-block;margin-top:22px;background:#fff;color:#155e75;padding:12px 26px;border-radius:9999px;font-weight:700;text-decoration:none}
+      .row{display:flex;flex-wrap:wrap;gap:16px;padding:36px 28px}
+      .card{flex:1 1 200px;border:1px solid #e5e7eb;border-radius:14px;padding:20px}
+      .card h3{color:#155e75}.card p{color:#6b7280;margin-top:8px;font-size:.9rem}
+      .bar{background:#f1f5f9;padding:16px 28px;text-align:center;color:#475569;font-size:.85rem}
+    </style></head><body>
+      <div class="hero"><h1>Mahopac Family Dental</h1><p>Gentle, modern dentistry for the whole family &mdash; now booking new patients.</p><a class="cta" href="#">Book an appointment</a></div>
+      <div class="row">
+        <div class="card"><h3>Same-day visits</h3><p>Emergency slots kept open every day for urgent care.</p></div>
+        <div class="card"><h3>Insurance friendly</h3><p>We handle the paperwork and most major plans.</p></div>
+        <div class="card"><h3>Kids welcome</h3><p>A calm, patient team that families in Mahopac trust.</p></div>
+      </div>
+      <div class="bar">123 Lake Blvd, Mahopac NY &middot; (845) 555-0142 &middot; Mon&ndash;Fri 8&ndash;5</div>
+    </body></html>`;
+
+    const DEMO_SALON = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+      *{margin:0;box-sizing:border-box;font-family:Georgia,serif}
+      .hero{background:#1c1917;color:#fbbf24;padding:64px 28px;text-align:center}
+      .hero h1{font-size:2.1rem;letter-spacing:.04em}.hero p{color:#e7e5e4;margin-top:10px;font-family:system-ui}
+      .cta{display:inline-block;margin-top:22px;background:#fbbf24;color:#1c1917;padding:12px 26px;border-radius:6px;font-weight:700;text-decoration:none;font-family:system-ui}
+      .svc{padding:36px 28px;max-width:520px;margin:0 auto}
+      .svc div{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #eee;font-family:system-ui}
+    </style></head><body>
+      <div class="hero"><h1>SHEAR ELEGANCE</h1><p>Carmel&rsquo;s studio for cut, color &amp; style.</p><a class="cta" href="#">Reserve your chair</a></div>
+      <div class="svc"><div><span>Women&rsquo;s cut &amp; style</span><span>$65+</span></div><div><span>Full color</span><span>$120+</span></div><div><span>Balayage</span><span>$180+</span></div><div><span>Men&rsquo;s cut</span><span>$35</span></div></div>
+    </body></html>`;
+
+    const SAMPLE = {
+      leads: [
+        { name: "Mahopac Family Dental", type: "dentist",    town: "Mahopac", perf_score: 34, status: "graded",      is_hot_lead: "true"  },
+        { name: "Summit Roofing Co",     type: "roofer",     town: "Carmel",  perf_score: 0,  status: "no_website",  is_hot_lead: "true"  },
+        { name: "Lakeside Bistro",       type: "restaurant", town: "Mahopac", perf_score: 78, status: "graded",      is_hot_lead: "false" },
+        { name: "Shear Elegance Salon",  type: "salon",      town: "Carmel",  perf_score: 45, status: "graded",      is_hot_lead: "true"  },
+        { name: "Carmel Auto Care",      type: "auto shop",  town: "Carmel",  perf_score: 0,  status: "unreachable", is_hot_lead: "false" }
+      ],
+      demoHtml: {
+        "mahopac-family-dental": DEMO_DENTAL,
+        "shear-elegance-salon": DEMO_SALON
+      },
+      outreach: {
+        "mahopac-family-dental":
+`Subject: Quick question about your Mahopac dentist website
+
+Hi Dr. Alvarez,
+
+I was looking at dental practices around Mahopac and noticed your site loads slowly on phones and doesn't have an easy "book online" button up top - which is where most new-patient enquiries start these days.
+
+I put together a quick redesigned home page for Mahopac Family Dental so you can see what a faster, mobile-first version could look like (no obligation, it's already built).
+
+If it's useful, our Starter site is a flat $1,495. Happy to send the preview link over - want me to?
+
+Best,
+Obsidian Labs`
+      }
+    };
+
+    function computeStatus() {
+      const hot = SAMPLE.leads.filter(l => String(l.is_hot_lead).toLowerCase() === "true").length;
+      return {
+        leads: SAMPLE.leads.length,
+        hot_leads: hot,
+        demos: Object.keys(SAMPLE.demoHtml).length,
+        outreach_drafts: Object.keys(SAMPLE.outreach).length,
+        pricing: { starter: 1495, professional: 2500, business_growth: "4500+" },
+        guardrails: "Runs 100% locally. Nothing auto-sends."
+      };
+    }
+
+    function cannedChat(msg) {
+      const m = (msg || "").toLowerCase();
+      if (m.includes("hot")) return "You have 3 hot leads right now: Mahopac Family Dental, Summit Roofing Co, and Shear Elegance Salon. Summit has no website at all - usually the easiest first conversation.";
+      if (m.includes("price") || m.includes("cost") || m.includes("$")) return "Pricing is Starter $1,495 / Professional $2,500 (most popular) / Business Growth $4,500+. The drafts pitch the Starter tier by default.";
+      if (m.includes("send")) return "This system never auto-sends. Approving a draft here just logs it - you send manually from your own inbox when you're ready.";
+      return "This is a preview reply. Against the live backend I answer using your real pipeline stats via local Ollama - nothing leaves your laptop. Try asking about your hot leads or pricing.";
+    }
+
+    async function apiGet(path) {
+      await new Promise(r => setTimeout(r, 110));
+      if (path === "/api/status") return computeStatus();
+      if (path === "/api/leads") return SAMPLE.leads;
+      if (path === "/api/demos") return Object.keys(SAMPLE.demoHtml).map(s => ({ slug: s }));
+      if (path.startsWith("/api/demos/")) {
+        const slug = decodeURIComponent(path.split("/").pop());
+        if (SAMPLE.demoHtml[slug]) return { slug, html: SAMPLE.demoHtml[slug] };
+        throw new Error(`${path} -> 404`);
+      }
+      if (path === "/api/outreach") return Object.keys(SAMPLE.outreach).map(s => ({ slug: s }));
+      if (path.startsWith("/api/outreach/")) {
+        const slug = decodeURIComponent(path.split("/").pop());
+        return { slug, content: SAMPLE.outreach[slug] || "" };
+      }
+      throw new Error(`${path} -> 404`);
+    }
+
+    async function apiPost(path, body) {
+      await new Promise(r => setTimeout(r, 150));
+      if (path === "/api/chat") return { reply: cannedChat((body || {}).message) };
+      if (path === "/api/approve") return { status: "logged", ...(body || {}) };
+      if (path === "/api/run-pipeline") return { status: "started", command: "pipeline.py --stage all" };
+      return {};
+    }
+
+    let currentDevice = "Desktop";
+    let currentSlug = null;
+    let leadsCache = [];
+
+    function pillFor(status, perf) {
+      perf = Number(perf) || 0;
+      if (status === "no_website") return ["No Website", "pill-red"];
+      if (status === "unreachable") return ["Unreachable", "pill-red"];
+      if (status === "api_error") return ["Grade Error", "pill-gray"];
+      if (perf <= 50) return ["Needs Improvement", "pill-amber"];
+      return ["Healthy", "pill-green"];
+    }
+
+    function slugify(name) {
+      return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "lead";
+    }
+
+    async function loadStatus() {
+      try {
+        const s = await apiGet("/api/status");
+        document.getElementById("m-leads").textContent = s.leads;
+        document.getElementById("m-hot").textContent = s.hot_leads;
+        document.getElementById("m-demos").textContent = s.demos;
+        document.getElementById("m-outreach").textContent = s.outreach_drafts;
+        document.getElementById("nav-meta").textContent =
+          `${s.leads} leads - ${s.hot_leads} hot - ${s.demos} demos - ${s.outreach_drafts} drafts`;
+      } catch (e) {
+        document.getElementById("nav-meta").textContent =
+          "Backend unreachable - is fastapi_backend running on :8502?";
+      }
+    }
+
+    async function loadLeads() {
+      try { leadsCache = await apiGet("/api/leads"); }
+      catch (e) { leadsCache = []; }
+      renderLeadsTable();
+      renderLeadsFullTable();
+    }
+
+    function renderLeadsTable() {
+      const tbody = document.getElementById("leads-tbody");
+      if (!leadsCache.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="muted">No leads yet. Run the pipeline above.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = leadsCache.map(l => {
+        const [label, cls] = pillFor(l.status, l.perf_score);
+        return `<tr class="lead-row" data-slug="${slugify(l.name)}" tabindex="0">
+          <td>${l.name || ""}</td><td>${l.type || ""}</td><td class="num">${l.perf_score || 0}</td>
+          <td><span class="pill ${cls}">${label}</span></td></tr>`;
+      }).join("");
+      document.querySelectorAll("#leads-tbody tr.lead-row").forEach(row => {
+        const go = () => selectLead(row.dataset.slug);
+        row.addEventListener("click", go);
+        row.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+      });
+    }
+
+    function renderLeadsFullTable() {
+      const tbody = document.getElementById("leads-full-tbody");
+      if (!leadsCache.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="muted">No leads yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = leadsCache.map(l => `<tr>
+        <td>${l.name || ""}</td><td>${l.type || ""}</td><td>${l.town || ""}</td>
+        <td class="num">${l.perf_score || 0}</td><td>${String(l.is_hot_lead).toLowerCase() === "true" ? "Yes" : "No"}</td></tr>`).join("");
+    }
+
+    async function selectLead(slug) {
+      currentSlug = slug;
+      document.getElementById("approve-btn").disabled = false;
+      try {
+        const demo = await apiGet(`/api/demos/${slug}`);
+        renderPreview(demo.html);
+        document.getElementById("run-status").textContent = `Previewing the generated demo for '${slug}'.`;
+      } catch (e) {
+        document.getElementById("demo-preview").srcdoc =
+          `<p style='font-family:sans-serif;color:#999;padding:2rem;'>No demo generated yet for '${slug}'.</p>`;
+        document.getElementById("run-status").textContent = `No demo generated yet for '${slug}'. (In the live app, the pipeline builds one.)`;
+      }
+    }
+
+    function renderPreview(html) {
+      const widths = { Desktop: "100%", Tablet: "768px", Mobile: "390px" };
+      const iframe = document.getElementById("demo-preview");
+      iframe.style.width = widths[currentDevice];
+      iframe.style.margin = currentDevice === "Desktop" ? "0" : "0 auto";
+      iframe.srcdoc = html;
+    }
+
+    document.querySelectorAll(".device-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".device-toggle button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentDevice = btn.dataset.device;
+        if (currentSlug) selectLead(currentSlug);
+      });
+    });
+
+    document.getElementById("approve-btn").addEventListener("click", async () => {
+      if (!currentSlug) return;
+      await apiPost("/api/approve", { kind: "dashboard_approve_and_send", identifier: currentSlug });
+      document.getElementById("run-status").textContent =
+        `Logged approval for '${currentSlug}'. This does NOT send anything.`;
+    });
+
+    document.getElementById("run-pipeline-btn").addEventListener("click", async () => {
+      document.getElementById("run-status").textContent = "Starting pipeline in background...";
+      try {
+        await apiPost("/api/run-pipeline", { stage: "all", towns: ["Mahopac", "Carmel"], niches: ["dentist", "roofer"], limit: 5 });
+        document.getElementById("run-status").textContent =
+          "Started. (Preview: in the live app this kicks off scrape -> grade -> demo -> outreach and logs to output/logs/pipeline_run.log.)";
+      } catch (e) {
+        document.getElementById("run-status").textContent = "Failed to start - is the backend running?";
+      }
+    });
+
+    async function loadDemos() {
+      try {
+        const demos = await apiGet("/api/demos");
+        const el = document.getElementById("demos-list");
+        if (!demos.length) { el.innerHTML = `<p class="muted">No demos generated yet.</p>`; return; }
+        el.innerHTML = demos.map(d => `<div class="draft-card"><strong>${d.slug}</strong></div>`).join("");
+      } catch (e) {}
+    }
+
+    async function loadOutreach() {
+      try {
+        const drafts = await apiGet("/api/outreach");
+        const el = document.getElementById("outreach-list");
+        if (!drafts.length) { el.innerHTML = `<p class="muted">No outreach drafts yet.</p>`; return; }
+        let html = "";
+        for (const d of drafts) {
+          const full = await apiGet(`/api/outreach/${d.slug}`);
+          html += `<div class="draft-card"><strong>${d.slug}</strong>
+            <pre>${full.content.replace(/</g, "&lt;")}</pre>
+            <button class="btn secondary" data-approve-slug="${d.slug}">Approve</button></div>`;
+        }
+        el.innerHTML = html;
+        el.querySelectorAll("[data-approve-slug]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            await apiPost("/api/approve", { kind: "outreach_approved", identifier: btn.dataset.approveSlug });
+            btn.textContent = "Approved";
+            btn.disabled = true;
+          });
+        });
+      } catch (e) {}
+    }
+
+    document.querySelectorAll(".navtabs button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".navtabs button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        ["dashboard", "leads", "demos", "outreach"].forEach(p => {
+          document.getElementById(`page-${p}`).style.display = p === btn.dataset.page ? "" : "none";
+        });
+        if (btn.dataset.page === "demos") loadDemos();
+        if (btn.dataset.page === "outreach") loadOutreach();
+      });
+    });
+
+    const chatToggle = document.getElementById("chat-toggle");
+    const chatPanel = document.getElementById("chat-panel");
+    const chatMessages = document.getElementById("chat-messages");
+    const chatInput = document.getElementById("chat-input");
+
+    chatToggle.addEventListener("click", () => chatPanel.classList.toggle("open"));
+
+    function addChatMsg(text, who) {
+      const div = document.createElement("div");
+      div.className = `chat-msg ${who}`;
+      div.textContent = text;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function sendChat() {
+      const msg = chatInput.value.trim();
+      if (!msg) return;
+      addChatMsg(msg, "user");
+      chatInput.value = "";
+      addChatMsg("Thinking...", "bot");
+      try {
+        const res = await apiPost("/api/chat", { message: msg });
+        chatMessages.lastChild.textContent = res.reply || "(no response)";
+      } catch (e) {
+        chatMessages.lastChild.textContent = "Couldn't reach the assistant - is fastapi_backend + Ollama running?";
+      }
+    }
+
+    document.getElementById("chat-send").addEventListener("click", sendChat);
+    chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
+
+    document.getElementById("settings-btn").addEventListener("click", () => {
+      alert("In the live dashboard this is where you paste your backend URL (e.g. your ngrok https address, or http://localhost:8502). In this preview the data is built-in, so there's nothing to point at.");
+    });
+
+    // Seed the assistant with a friendly opener and load everything.
+    addChatMsg("Hi! I'm your pipeline assistant. Ask me about your hot leads, drafts, or pricing.", "bot");
+    loadStatus();
+    loadLeads();
   </script>
 </body>
 </html>
@@ -7271,565 +8532,32 @@ Obsidian Labs` }
 
 ```
 
-## `dashboard_preview.html`  
-_(539 lines)_
+## `docs/README.md`  
+_(23 lines)_
 
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Obsidian Labs - Dashboard Preview</title>
-  <meta name="theme-color" content="#f8f9fa" />
-  <style>
-    :root {
-      --red: #cc0000;
-      --red-dark: #a30000;
-      --bg: #f8f9fa;
-      --card: #ffffff;
-      --border: #eee;
-      --text: #111;
-      --muted: #6b7280;
-    }
-    * { box-sizing: border-box; }
-    html, body { background: var(--bg); }
-    body {
-      margin: 0;
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-    .preview-banner {
-      background: #111; color: #fff; font-size: 0.78rem; text-align: center;
-      padding: 0.5rem 1rem; letter-spacing: 0.01em;
-    }
-    .preview-banner strong { color: #ff6b6b; }
-    .wrap { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
-    .topnav {
-      display: flex; align-items: center; justify-content: space-between;
-      padding-bottom: 1rem; border-bottom: 1px solid var(--border);
-      margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap;
-    }
-    .brand { font-weight: 700; font-size: 1.2rem; letter-spacing: -0.02em; }
-    .navtabs { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-    .navtabs button {
-      background: none; border: none; padding: 0.5rem 1rem; border-radius: 9999px;
-      font-weight: 600; cursor: pointer; color: var(--muted);
-    }
-    .navtabs button.active { background: #111; color: white; }
-    .navmeta { font-size: 0.8rem; color: var(--muted); text-align: right; }
-    .metrics {
-      display: grid; grid-template-columns: repeat(4, 1fr);
-      gap: 1rem; margin-bottom: 1.5rem;
-    }
-    .metric-card {
-      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
-      padding: 1.25rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-    }
-    .metric-card .label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
-    .metric-card .value { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-    .btn {
-      border-radius: 9999px; padding: 0.6rem 1.6rem; font-weight: 600; border: none;
-      background: var(--red); color: white; cursor: pointer; transition: all 0.15s;
-    }
-    .btn:hover { background: var(--red-dark); transform: translateY(-1px); }
-    .btn.secondary { background: #eee; color: #111; }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-    .section {
-      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
-      padding: 1.5rem; margin-bottom: 1.5rem;
-    }
-    .section h2 { margin-top: 0; font-size: 1.1rem; }
-    .two-col { display: grid; grid-template-columns: 2fr 3fr; gap: 1.5rem; }
-    @media (max-width: 900px) {
-      .two-col { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: repeat(2, 1fr); }
-      .wrap { padding: 1.25rem 1rem 4rem; }
-    }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { text-align: left; padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--border); }
-    td.num { font-variant-numeric: tabular-nums; }
-    tr.lead-row { cursor: pointer; }
-    tr.lead-row:hover { background: #fafafa; }
-    .pill {
-      display: inline-block; padding: 3px 10px; border-radius: 9999px;
-      font-size: 0.75rem; font-weight: 600;
-    }
-    .pill-red { background: #ef4444; color: #fff; }
-    .pill-amber { background: #f59e0b; color: #111; }
-    .pill-green { background: #22c55e; color: #111; }
-    .pill-gray { background: #6b7280; color: #fff; }
-    .device-toggle { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    .device-toggle button {
-      padding: 0.35rem 0.9rem; border-radius: 9999px; border: 1px solid var(--border);
-      background: white; cursor: pointer; font-size: 0.8rem;
-    }
-    .device-toggle button.active { background: #111; color: white; border-color: #111; }
-    .preview-frame-wrap { display: flex; justify-content: center; }
-    iframe#demo-preview {
-      border: 1px solid var(--border); border-radius: 16px;
-      width: 100%; height: 640px; background: white;
-    }
-    .draft-card {
-      border: 1px solid var(--border); border-radius: 12px;
-      padding: 1rem; margin-bottom: 0.75rem;
-    }
-    .draft-card pre { white-space: pre-wrap; font-family: inherit; font-size: 0.85rem; }
-    #chat-toggle {
-      position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px;
-      border-radius: 50%; background: var(--red); color: white; border: none;
-      font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.2); z-index: 50;
-    }
-    #chat-panel {
-      position: fixed; bottom: 90px; right: 24px; width: 340px; max-height: 480px;
-      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.18); display: none;
-      flex-direction: column; z-index: 50; overflow: hidden;
-    }
-    #chat-panel.open { display: flex; }
-    #chat-header { background: #111; color: white; padding: 0.75rem 1rem; font-weight: 600; }
-    #chat-messages {
-      flex: 1; overflow-y: auto; padding: 0.75rem 1rem; font-size: 0.85rem;
-      display: flex; flex-direction: column; gap: 0.5rem;
-    }
-    .chat-msg { padding: 0.5rem 0.75rem; border-radius: 12px; max-width: 85%; }
-    .chat-msg.user { align-self: flex-end; background: var(--red); color: white; }
-    .chat-msg.bot { align-self: flex-start; background: #f1f1f1; color: #111; }
-    #chat-input-row { display: flex; border-top: 1px solid var(--border); }
-    #chat-input { flex: 1; border: none; padding: 0.75rem; font-size: 0.85rem; }
-    #chat-send { border: none; background: var(--red); color: white; padding: 0 1rem; cursor: pointer; }
-    .muted { color: var(--muted); font-size: 0.85rem; }
-    button:focus-visible, .navtabs button:focus-visible, tr.lead-row:focus-visible {
-      outline: 2px solid var(--red); outline-offset: 2px;
-    }
-  </style>
-</head>
-<body>
-  <div class="preview-banner">
-    <strong>Preview</strong> &middot; sample data, no live backend &mdash; this is exactly how the dashboard looks &amp; behaves once <code>fastapi_backend</code> is running on your laptop.
-  </div>
-  <div class="wrap">
-    <div class="topnav">
-      <div class="brand">&#9632; Obsidian Labs</div>
-      <div class="navtabs">
-        <button data-page="dashboard" class="active">Dashboard</button>
-        <button data-page="leads">Leads</button>
-        <button data-page="demos">Demos</button>
-        <button data-page="outreach">Outreach</button>
-      </div>
-      <div class="navmeta" id="nav-meta">Runs 100% locally. Nothing auto-sends.</div>
-      <button class="btn secondary" id="settings-btn" title="Set backend URL">&#9881;</button>
-    </div>
+```markdown
+# Obsidian Labs — Docs
 
-    <div class="metrics">
-      <div class="metric-card"><div class="label">Leads</div><div class="value" id="m-leads">-</div></div>
-      <div class="metric-card"><div class="label">Hot leads</div><div class="value" id="m-hot">-</div></div>
-      <div class="metric-card"><div class="label">Demos generated</div><div class="value" id="m-demos">-</div></div>
-      <div class="metric-card"><div class="label">Outreach drafts</div><div class="value" id="m-outreach">-</div></div>
-    </div>
+Reference material for the pipeline and business around it.
 
-    <div id="page-dashboard">
-      <div class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-          <button class="btn" id="run-pipeline-btn">Run Pipeline</button>
-          <button class="btn secondary" id="approve-btn" disabled>Approve &amp; Send</button>
-        </div>
-        <p class="muted" id="run-status">Tap a lead below to preview its generated demo site.</p>
-      </div>
-      <div class="two-col">
-        <div class="section">
-          <h2>Leads</h2>
-          <table>
-            <thead><tr><th>Business</th><th>Niche</th><th>Score</th><th>Status</th></tr></thead>
-            <tbody id="leads-tbody"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
-          </table>
-        </div>
-        <div class="section">
-          <h2>HTML Preview</h2>
-          <div class="device-toggle">
-            <button data-device="Desktop" class="active">Desktop</button>
-            <button data-device="Tablet">Tablet</button>
-            <button data-device="Mobile">Mobile</button>
-          </div>
-          <div class="preview-frame-wrap">
-            <iframe id="demo-preview" title="Demo site preview" srcdoc="<p style='font-family:sans-serif;color:#999;padding:2rem;'>Select a lead to preview its demo.</p>"></iframe>
-          </div>
-        </div>
-      </div>
-    </div>
+| Doc | What it is |
+| --- | --- |
+| [business-playbook.md](business-playbook.md) | The full **find → build → ship → sell** playbook for selling premium one-page sites to local businesses (niche demos, Google Maps prospecting, outreach templates, pricing, follow-up). Synthesized from @bounceidc's July 2026 thread + Claude Code setup details. |
+| [dashboard-v2-prompt.md](dashboard-v2-prompt.md) | A ready-to-paste prompt for generating a **v2 dashboard** — a Tesla/Apple-style dark glassmorphism redesign of `tesla_style_dashboard_with_chat.html` that keeps every current feature and needs **no backend changes**. |
+| [tesla-dashboard-blueprint.md](tesla-dashboard-blueprint.md) | The **design blueprint** the v2 prompt refers to — color tokens, glassmorphism card CSS, animated status ring, layout sketch, and the feature list (command palette, live activity feed, KPI + Potential Revenue cards). |
 
-    <div id="page-leads" style="display:none;">
-      <div class="section">
-        <h2>All Leads</h2>
-        <table>
-          <thead><tr><th>Business</th><th>Niche</th><th>Town</th><th>Score</th><th>Hot?</th></tr></thead>
-          <tbody id="leads-full-tbody"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
+## How these fit together
 
-    <div id="page-demos" style="display:none;">
-      <div class="section">
-        <h2>Demos</h2>
-        <div id="demos-list" class="muted">Loading...</div>
-      </div>
-    </div>
+- **business-playbook.md** is the *why/how you make money* — the sales loop the pipeline feeds.
+- **dashboard-v2-prompt.md** + **tesla-dashboard-blueprint.md** are the *design spec* for the next
+  iteration of the dashboard UI. The current shipped dashboard is the light-themed
+  `../tesla_style_dashboard_with_chat.html`; these two describe the dark "premium" v2 that would
+  replace its look while reusing the same `fastapi_backend.py` API contract.
 
-    <div id="page-outreach" style="display:none;">
-      <div class="section">
-        <h2>Outreach Drafts</h2>
-        <p class="muted">Drafts only - approving here just logs the approval. Sending is a separate, deliberate step outside this dashboard.</p>
-        <div id="outreach-list" class="muted">Loading...</div>
-      </div>
-    </div>
-  </div>
-
-  <button id="chat-toggle" title="Ask the Obsidian Labs assistant">&#128172;</button>
-  <div id="chat-panel">
-    <div id="chat-header">Obsidian Labs Assistant</div>
-    <div id="chat-messages"></div>
-    <div id="chat-input-row">
-      <input id="chat-input" type="text" placeholder="Ask about your pipeline..." />
-      <button id="chat-send">Send</button>
-    </div>
-  </div>
-
-  <script>
-    // ---------------------------------------------------------------------
-    // PREVIEW BUILD: the real dashboard fetches everything from
-    // fastapi_backend on :8502. Here that network layer is replaced with
-    // baked-in sample data so the page is fully self-contained and works
-    // as a shareable link with no laptop/backend. Every interaction below
-    // behaves exactly as it does against the live backend.
-    // ---------------------------------------------------------------------
-    const DEMO_DENTAL = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-      *{margin:0;box-sizing:border-box;font-family:system-ui,sans-serif}
-      .hero{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;padding:64px 28px;text-align:center}
-      .hero h1{font-size:2rem;letter-spacing:-.02em}.hero p{opacity:.9;margin-top:10px}
-      .cta{display:inline-block;margin-top:22px;background:#fff;color:#155e75;padding:12px 26px;border-radius:9999px;font-weight:700;text-decoration:none}
-      .row{display:flex;flex-wrap:wrap;gap:16px;padding:36px 28px}
-      .card{flex:1 1 200px;border:1px solid #e5e7eb;border-radius:14px;padding:20px}
-      .card h3{color:#155e75}.card p{color:#6b7280;margin-top:8px;font-size:.9rem}
-      .bar{background:#f1f5f9;padding:16px 28px;text-align:center;color:#475569;font-size:.85rem}
-    </style></head><body>
-      <div class="hero"><h1>Mahopac Family Dental</h1><p>Gentle, modern dentistry for the whole family &mdash; now booking new patients.</p><a class="cta" href="#">Book an appointment</a></div>
-      <div class="row">
-        <div class="card"><h3>Same-day visits</h3><p>Emergency slots kept open every day for urgent care.</p></div>
-        <div class="card"><h3>Insurance friendly</h3><p>We handle the paperwork and most major plans.</p></div>
-        <div class="card"><h3>Kids welcome</h3><p>A calm, patient team that families in Mahopac trust.</p></div>
-      </div>
-      <div class="bar">123 Lake Blvd, Mahopac NY &middot; (845) 555-0142 &middot; Mon&ndash;Fri 8&ndash;5</div>
-    </body></html>`;
-
-    const DEMO_SALON = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-      *{margin:0;box-sizing:border-box;font-family:Georgia,serif}
-      .hero{background:#1c1917;color:#fbbf24;padding:64px 28px;text-align:center}
-      .hero h1{font-size:2.1rem;letter-spacing:.04em}.hero p{color:#e7e5e4;margin-top:10px;font-family:system-ui}
-      .cta{display:inline-block;margin-top:22px;background:#fbbf24;color:#1c1917;padding:12px 26px;border-radius:6px;font-weight:700;text-decoration:none;font-family:system-ui}
-      .svc{padding:36px 28px;max-width:520px;margin:0 auto}
-      .svc div{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #eee;font-family:system-ui}
-    </style></head><body>
-      <div class="hero"><h1>SHEAR ELEGANCE</h1><p>Carmel&rsquo;s studio for cut, color &amp; style.</p><a class="cta" href="#">Reserve your chair</a></div>
-      <div class="svc"><div><span>Women&rsquo;s cut &amp; style</span><span>$65+</span></div><div><span>Full color</span><span>$120+</span></div><div><span>Balayage</span><span>$180+</span></div><div><span>Men&rsquo;s cut</span><span>$35</span></div></div>
-    </body></html>`;
-
-    const SAMPLE = {
-      leads: [
-        { name: "Mahopac Family Dental", type: "dentist",    town: "Mahopac", perf_score: 34, status: "graded",      is_hot_lead: "true"  },
-        { name: "Summit Roofing Co",     type: "roofer",     town: "Carmel",  perf_score: 0,  status: "no_website",  is_hot_lead: "true"  },
-        { name: "Lakeside Bistro",       type: "restaurant", town: "Mahopac", perf_score: 78, status: "graded",      is_hot_lead: "false" },
-        { name: "Shear Elegance Salon",  type: "salon",      town: "Carmel",  perf_score: 45, status: "graded",      is_hot_lead: "true"  },
-        { name: "Carmel Auto Care",      type: "auto shop",  town: "Carmel",  perf_score: 0,  status: "unreachable", is_hot_lead: "false" }
-      ],
-      demoHtml: {
-        "mahopac-family-dental": DEMO_DENTAL,
-        "shear-elegance-salon": DEMO_SALON
-      },
-      outreach: {
-        "mahopac-family-dental":
-`Subject: Quick question about your Mahopac dentist website
-
-Hi Dr. Alvarez,
-
-I was looking at dental practices around Mahopac and noticed your site loads slowly on phones and doesn't have an easy "book online" button up top - which is where most new-patient enquiries start these days.
-
-I put together a quick redesigned home page for Mahopac Family Dental so you can see what a faster, mobile-first version could look like (no obligation, it's already built).
-
-If it's useful, our Starter site is a flat $1,495. Happy to send the preview link over - want me to?
-
-Best,
-Obsidian Labs`
-      }
-    };
-
-    function computeStatus() {
-      const hot = SAMPLE.leads.filter(l => String(l.is_hot_lead).toLowerCase() === "true").length;
-      return {
-        leads: SAMPLE.leads.length,
-        hot_leads: hot,
-        demos: Object.keys(SAMPLE.demoHtml).length,
-        outreach_drafts: Object.keys(SAMPLE.outreach).length,
-        pricing: { starter: 1495, professional: 2500, business_growth: "4500+" },
-        guardrails: "Runs 100% locally. Nothing auto-sends."
-      };
-    }
-
-    function cannedChat(msg) {
-      const m = (msg || "").toLowerCase();
-      if (m.includes("hot")) return "You have 3 hot leads right now: Mahopac Family Dental, Summit Roofing Co, and Shear Elegance Salon. Summit has no website at all - usually the easiest first conversation.";
-      if (m.includes("price") || m.includes("cost") || m.includes("$")) return "Pricing is Starter $1,495 / Professional $2,500 (most popular) / Business Growth $4,500+. The drafts pitch the Starter tier by default.";
-      if (m.includes("send")) return "This system never auto-sends. Approving a draft here just logs it - you send manually from your own inbox when you're ready.";
-      return "This is a preview reply. Against the live backend I answer using your real pipeline stats via local Ollama - nothing leaves your laptop. Try asking about your hot leads or pricing.";
-    }
-
-    async function apiGet(path) {
-      await new Promise(r => setTimeout(r, 110));
-      if (path === "/api/status") return computeStatus();
-      if (path === "/api/leads") return SAMPLE.leads;
-      if (path === "/api/demos") return Object.keys(SAMPLE.demoHtml).map(s => ({ slug: s }));
-      if (path.startsWith("/api/demos/")) {
-        const slug = decodeURIComponent(path.split("/").pop());
-        if (SAMPLE.demoHtml[slug]) return { slug, html: SAMPLE.demoHtml[slug] };
-        throw new Error(`${path} -> 404`);
-      }
-      if (path === "/api/outreach") return Object.keys(SAMPLE.outreach).map(s => ({ slug: s }));
-      if (path.startsWith("/api/outreach/")) {
-        const slug = decodeURIComponent(path.split("/").pop());
-        return { slug, content: SAMPLE.outreach[slug] || "" };
-      }
-      throw new Error(`${path} -> 404`);
-    }
-
-    async function apiPost(path, body) {
-      await new Promise(r => setTimeout(r, 150));
-      if (path === "/api/chat") return { reply: cannedChat((body || {}).message) };
-      if (path === "/api/approve") return { status: "logged", ...(body || {}) };
-      if (path === "/api/run-pipeline") return { status: "started", command: "pipeline.py --stage all" };
-      return {};
-    }
-
-    let currentDevice = "Desktop";
-    let currentSlug = null;
-    let leadsCache = [];
-
-    function pillFor(status, perf) {
-      perf = Number(perf) || 0;
-      if (status === "no_website") return ["No Website", "pill-red"];
-      if (status === "unreachable") return ["Unreachable", "pill-red"];
-      if (status === "api_error") return ["Grade Error", "pill-gray"];
-      if (perf <= 50) return ["Needs Improvement", "pill-amber"];
-      return ["Healthy", "pill-green"];
-    }
-
-    function slugify(name) {
-      return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "lead";
-    }
-
-    async function loadStatus() {
-      try {
-        const s = await apiGet("/api/status");
-        document.getElementById("m-leads").textContent = s.leads;
-        document.getElementById("m-hot").textContent = s.hot_leads;
-        document.getElementById("m-demos").textContent = s.demos;
-        document.getElementById("m-outreach").textContent = s.outreach_drafts;
-        document.getElementById("nav-meta").textContent =
-          `${s.leads} leads - ${s.hot_leads} hot - ${s.demos} demos - ${s.outreach_drafts} drafts`;
-      } catch (e) {
-        document.getElementById("nav-meta").textContent =
-          "Backend unreachable - is fastapi_backend running on :8502?";
-      }
-    }
-
-    async function loadLeads() {
-      try { leadsCache = await apiGet("/api/leads"); }
-      catch (e) { leadsCache = []; }
-      renderLeadsTable();
-      renderLeadsFullTable();
-    }
-
-    function renderLeadsTable() {
-      const tbody = document.getElementById("leads-tbody");
-      if (!leadsCache.length) {
-        tbody.innerHTML = `<tr><td colspan="4" class="muted">No leads yet. Run the pipeline above.</td></tr>`;
-        return;
-      }
-      tbody.innerHTML = leadsCache.map(l => {
-        const [label, cls] = pillFor(l.status, l.perf_score);
-        return `<tr class="lead-row" data-slug="${slugify(l.name)}" tabindex="0">
-          <td>${l.name || ""}</td><td>${l.type || ""}</td><td class="num">${l.perf_score || 0}</td>
-          <td><span class="pill ${cls}">${label}</span></td></tr>`;
-      }).join("");
-      document.querySelectorAll("#leads-tbody tr.lead-row").forEach(row => {
-        const go = () => selectLead(row.dataset.slug);
-        row.addEventListener("click", go);
-        row.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
-      });
-    }
-
-    function renderLeadsFullTable() {
-      const tbody = document.getElementById("leads-full-tbody");
-      if (!leadsCache.length) {
-        tbody.innerHTML = `<tr><td colspan="5" class="muted">No leads yet.</td></tr>`;
-        return;
-      }
-      tbody.innerHTML = leadsCache.map(l => `<tr>
-        <td>${l.name || ""}</td><td>${l.type || ""}</td><td>${l.town || ""}</td>
-        <td class="num">${l.perf_score || 0}</td><td>${String(l.is_hot_lead).toLowerCase() === "true" ? "Yes" : "No"}</td></tr>`).join("");
-    }
-
-    async function selectLead(slug) {
-      currentSlug = slug;
-      document.getElementById("approve-btn").disabled = false;
-      try {
-        const demo = await apiGet(`/api/demos/${slug}`);
-        renderPreview(demo.html);
-        document.getElementById("run-status").textContent = `Previewing the generated demo for '${slug}'.`;
-      } catch (e) {
-        document.getElementById("demo-preview").srcdoc =
-          `<p style='font-family:sans-serif;color:#999;padding:2rem;'>No demo generated yet for '${slug}'.</p>`;
-        document.getElementById("run-status").textContent = `No demo generated yet for '${slug}'. (In the live app, the pipeline builds one.)`;
-      }
-    }
-
-    function renderPreview(html) {
-      const widths = { Desktop: "100%", Tablet: "768px", Mobile: "390px" };
-      const iframe = document.getElementById("demo-preview");
-      iframe.style.width = widths[currentDevice];
-      iframe.style.margin = currentDevice === "Desktop" ? "0" : "0 auto";
-      iframe.srcdoc = html;
-    }
-
-    document.querySelectorAll(".device-toggle button").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".device-toggle button").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        currentDevice = btn.dataset.device;
-        if (currentSlug) selectLead(currentSlug);
-      });
-    });
-
-    document.getElementById("approve-btn").addEventListener("click", async () => {
-      if (!currentSlug) return;
-      await apiPost("/api/approve", { kind: "dashboard_approve_and_send", identifier: currentSlug });
-      document.getElementById("run-status").textContent =
-        `Logged approval for '${currentSlug}'. This does NOT send anything.`;
-    });
-
-    document.getElementById("run-pipeline-btn").addEventListener("click", async () => {
-      document.getElementById("run-status").textContent = "Starting pipeline in background...";
-      try {
-        await apiPost("/api/run-pipeline", { stage: "all", towns: ["Mahopac", "Carmel"], niches: ["dentist", "roofer"], limit: 5 });
-        document.getElementById("run-status").textContent =
-          "Started. (Preview: in the live app this kicks off scrape -> grade -> demo -> outreach and logs to output/logs/pipeline_run.log.)";
-      } catch (e) {
-        document.getElementById("run-status").textContent = "Failed to start - is the backend running?";
-      }
-    });
-
-    async function loadDemos() {
-      try {
-        const demos = await apiGet("/api/demos");
-        const el = document.getElementById("demos-list");
-        if (!demos.length) { el.innerHTML = `<p class="muted">No demos generated yet.</p>`; return; }
-        el.innerHTML = demos.map(d => `<div class="draft-card"><strong>${d.slug}</strong></div>`).join("");
-      } catch (e) {}
-    }
-
-    async function loadOutreach() {
-      try {
-        const drafts = await apiGet("/api/outreach");
-        const el = document.getElementById("outreach-list");
-        if (!drafts.length) { el.innerHTML = `<p class="muted">No outreach drafts yet.</p>`; return; }
-        let html = "";
-        for (const d of drafts) {
-          const full = await apiGet(`/api/outreach/${d.slug}`);
-          html += `<div class="draft-card"><strong>${d.slug}</strong>
-            <pre>${full.content.replace(/</g, "&lt;")}</pre>
-            <button class="btn secondary" data-approve-slug="${d.slug}">Approve</button></div>`;
-        }
-        el.innerHTML = html;
-        el.querySelectorAll("[data-approve-slug]").forEach(btn => {
-          btn.addEventListener("click", async () => {
-            await apiPost("/api/approve", { kind: "outreach_approved", identifier: btn.dataset.approveSlug });
-            btn.textContent = "Approved";
-            btn.disabled = true;
-          });
-        });
-      } catch (e) {}
-    }
-
-    document.querySelectorAll(".navtabs button").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".navtabs button").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        ["dashboard", "leads", "demos", "outreach"].forEach(p => {
-          document.getElementById(`page-${p}`).style.display = p === btn.dataset.page ? "" : "none";
-        });
-        if (btn.dataset.page === "demos") loadDemos();
-        if (btn.dataset.page === "outreach") loadOutreach();
-      });
-    });
-
-    const chatToggle = document.getElementById("chat-toggle");
-    const chatPanel = document.getElementById("chat-panel");
-    const chatMessages = document.getElementById("chat-messages");
-    const chatInput = document.getElementById("chat-input");
-
-    chatToggle.addEventListener("click", () => chatPanel.classList.toggle("open"));
-
-    function addChatMsg(text, who) {
-      const div = document.createElement("div");
-      div.className = `chat-msg ${who}`;
-      div.textContent = text;
-      chatMessages.appendChild(div);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    async function sendChat() {
-      const msg = chatInput.value.trim();
-      if (!msg) return;
-      addChatMsg(msg, "user");
-      chatInput.value = "";
-      addChatMsg("Thinking...", "bot");
-      try {
-        const res = await apiPost("/api/chat", { message: msg });
-        chatMessages.lastChild.textContent = res.reply || "(no response)";
-      } catch (e) {
-        chatMessages.lastChild.textContent = "Couldn't reach the assistant - is fastapi_backend + Ollama running?";
-      }
-    }
-
-    document.getElementById("chat-send").addEventListener("click", sendChat);
-    chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
-
-    document.getElementById("settings-btn").addEventListener("click", () => {
-      alert("In the live dashboard this is where you paste your backend URL (e.g. your ngrok https address, or http://localhost:8502). In this preview the data is built-in, so there's nothing to point at.");
-    });
-
-    // Seed the assistant with a friendly opener and load everything.
-    addChatMsg("Hi! I'm your pipeline assistant. Ask me about your hot leads, drafts, or pricing.", "bot");
-    loadStatus();
-    loadLeads();
-  </script>
-</body>
-</html>
-
-```
-
-# Other files
-
-## `NEW_REQUIREMENTS_ADD_2026-07-10.txt`  
-_(9 lines)_
-
-```text
-# Add these lines to your existing requirements.txt (don't replace the whole file -
-# just append anything from this list you don't already have), then:
-#   pip install -r requirements.txt
-fastapi>=0.110,<1.0
-uvicorn>=0.29,<1.0
-pydantic>=2.0,<3.0
-requests>=2.31,<3.0
-pillow>=10.0,<11.0
+> Note: the v2 blueprint suggests a Next.js/React/Tailwind stack in one section, but the
+> prompt itself asks for a **single self-contained HTML file** that works with the existing
+> FastAPI backend on port 8502 — that single-file path is the one that matches how the current
+> dashboard is built and deployed (GitHub Pages + ngrok, no build step).
 
 ```
 
@@ -7863,14 +8591,55 @@ langchain-chroma>=0.1,<1.0
 
 ```
 
+## `seed_demos/README.md`  
+_(13 lines)_
+
+```markdown
+# seed_demos
+
+Drop any past demo websites here as `.html` files and they'll show up in the dashboard.
+
+- Put a file like `demo_wallys-super-service.html` (or any `.html`) in this folder.
+- Run `python import_demos.py` (or just launch `START.bat` — it imports automatically).
+- The demo appears in the dashboard's **Demos** tab, and if its name matches a lead
+  (e.g. "Wally's Super Service"), it also previews when you click that lead.
+
+`import_demos.py` also auto-scans your Google Drive and Obsidian vault (the
+`GDRIVE_PATH` / `OBSIDIAN_VAULT_PATH` in `.env`) for `demo_*.html` files, so demos
+you already have there get pulled in without copying them here first.
+
+```
+
+## `templates/reference_demos/README.md`  
+_(16 lines)_
+
+```markdown
+# Reference demos
+
+`demo_gen_local.py` optionally loads one file here as a **few-shot code-quality
+example** — a concrete "this is the bar" sample the local model imitates for
+structure and polish (never for content).
+
+- `wallys-super-service.html` — a **sample** reference (a fictional auto shop),
+  provided so demo generation has a quality bar out of the box. It is not a real
+  client. Replace it with one of your own best shipped demos for higher fidelity
+  to your actual style.
+
+The generator is explicitly told to copy *technique*, not content — it must never
+reuse the reference business's name, address, phone, or reviews for a different lead.
+If this folder is empty, demo generation still works (it just runs without a few-shot
+example, and prints a NOTE).
+
+```
+
 ---
 
-## For the reviewer (paste this to ChatGPT)
-> You are a senior engineer reviewing a $0-cost, fully local lead-gen pipeline for a
-> web-design studio (scrape local businesses → grade their site → generate a demo with a
-> local LLM via Ollama → draft a CAN-SPAM outreach email → a human approves in a dashboard →
-> the human sends manually; nothing auto-sends). All files are below. Review for correctness,
-> security, and reliability: flag real bugs, risky edges, and anything that breaks under real
-> data or when Ollama / the RAG index / GOOGLE_API_KEY are missing. Then give prioritized,
-> concrete fixes. Note: scraper.py and grader.py are re-implementations of the documented
-> interface; the templates/*.md prompts are starter content.
+## Review prompt (paste to ChatGPT)
+> You are a senior engineer reviewing a $0-cost, fully local lead-gen pipeline for a web-design
+> studio (scrape -> grade -> local-LLM demo -> outreach draft -> human approves in a dashboard ->
+> human sends; nothing auto-sends). The full codebase, data model, and demo catalog are below.
+> Review for correctness, security, and reliability: flag real bugs, risky edges, and anything
+> that breaks under real data or when Ollama / the RAG index / GOOGLE_API_KEY are missing. Then
+> give prioritized, concrete fixes. Note: scraper.py and grader.py are re-implementations of the
+> documented Google Places / PageSpeed interface; the templates/*.md prompts are starter content;
+> the demo website HTML is cataloged but not embedded.
