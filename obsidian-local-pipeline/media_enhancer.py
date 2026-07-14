@@ -38,6 +38,10 @@ NICHE_MOOD = {
     "auto shop": ("modern auto repair garage", "precise, technical, dependable"),
     "salon": ("modern hair salon interior", "stylish, clean, upscale"),
     "gym": ("modern fitness gym interior", "energetic, motivating, clean"),
+    "plumb": ("professional plumber fixing pipes under sink", "reliable, clean, professional"),
+    "electric": ("licensed electrician working on panel", "safe, precise, dependable"),
+    "hvac": ("hvac technician servicing outdoor unit", "reliable, technical, comfortable"),
+    "cleaning": ("spotless clean modern home interior", "fresh, spotless, trustworthy"),
 }
 DEFAULT_MOOD = (
     "professional local business storefront",
